@@ -7,7 +7,7 @@ El proyecto consiste en una interfaz WebApp realizada con spring-boot que se con
     b. Insertar datos en las tablas conforme a la petición del usuario.
     
     c. Exportar el script completo.
-  3. Realizar análisis de consultas y procedimientos. Se debe:
+  2. Realizar análisis de consultas y procedimientos. Se debe:
      
     a.Analizar estáticamente las consultas y procedimientos con pglast y detectar sus malas prácticas.
     
@@ -16,7 +16,7 @@ El proyecto consiste en una interfaz WebApp realizada con spring-boot que se con
     c. Dar formato SQL con pglast para mostrarse en la WebApp.
     
     d. Mostrar recomendaciones para para optimizar los resultados.
-  5. Leer los logs generados con JPA e Hibernate. Se seguirán los siguientes pasos:
+  3. Leer los logs generados con JPA e Hibernate. Se seguirán los siguientes pasos:
      
     a. Cargar el .txt con los logs generados.
     
