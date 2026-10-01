@@ -25,5 +25,6 @@ El proyecto consiste en una interfaz WebApp realizada con spring-boot que se con
     c. Analizar las consultas de los logs y almacenar los resultados de los análisis.
 
 TFG: Grado en Ingeniería Informática - Universidad de Burgos.
+
 Alumno: Rubén Alonso Quintana.
 
