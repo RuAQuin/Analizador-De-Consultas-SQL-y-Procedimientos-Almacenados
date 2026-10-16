@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Análisis de consultas')}"></head>
+<body>
+<div class="shell">
+    <aside th:replace="~{fragments/layout :: sidebar}"></aside>
+
+    <main class="content">
+        <header class="page-head">
+            <span class="eyebrow">Módulo 02</span>
+            <h1>Análisis de consultas y procedimientos</h1>
+            <p class="muted">Análisis estático con pglast, Explain Plans, formato SQL y recomendaciones.</p>
+        </header>
+
+        <div th:replace="~{fragments/layout :: mensajes}"></div>
+
+        <form th:action="@{/analisis}" th:object="${form}" method="post" class="panel form" novalidate>
+            <div class="row">
+                <label class="field field-sm">
+                    <span>Tipo</span>
+                    <select th:field="*{tipo}">
+                        <option th:each="t : ${tipos}" th:value="${t}"
+                                th:text="${t.name() == 'CONSULTA'} ? 'Consulta' : 'Procedimiento'"></option>
+                    </select>
+                </label>
+                <label class="field field-sm">
+                    <span>Base de datos destino</span>
+                    <input type="text" th:field="*{bbddDestino}" placeholder="tienda_demo">
+                </label>
+            </div>
+
+            <label class="field">
+                <span>SQL</span>
+                <textarea th:field="*{sql}" rows="10" class="code" spellcheck="false"
+                          placeholder="SELECT * FROM pedido p JOIN cliente c ON c.id = p.cliente_id WHERE ..."
+                          th:classappend="${#fields.hasErrors('sql')} ? 'invalid'"></textarea>
+                <small class="field-error" th:if="${#fields.hasErrors('sql')}" th:errors="*{sql}"></small>
+            </label>
+
+            <fieldset class="checks">
+                <legend>Qué ejecutar</legend>
+                <label class="check"><input type="checkbox" th:field="*{analisisEstatico}"><span>Análisis estático (pglast)</span></label>
+                <label class="check"><input type="checkbox" th:field="*{explainPlan}"><span>Explain Plan</span></label>
+                <label class="check"><input type="checkbox" th:field="*{explainAnalyze}"><span>EXPLAIN ANALYZE (ejecuta la consulta)</span></label>
+                <label class="check"><input type="checkbox" th:field="*{formatear}"><span>Formatear SQL</span></label>
+                <small class="field-error" th:if="${#fields.hasErrors('explainAnalyze')}" th:errors="*{explainAnalyze}"></small>
+            </fieldset>
+
+            <button type="submit" class="btn btn-primary">Analizar</button>
+        </form>
+
+        <section class="grid-2 results">
+            <article class="panel">
+                <h2 class="panel-title">Malas prácticas detectadas</h2>
+                <div class="empty">Sin resultados todavía.</div>
+            </article>
+            <article class="panel">
+                <h2 class="panel-title">Explain Plan</h2>
+                <div class="empty">Sin resultados todavía.</div>
+            </article>
+            <article class="panel">
+                <h2 class="panel-title">SQL formateado</h2>
+                <pre class="code-block empty-code">-- El SQL formateado con pglast aparecerá aquí</pre>
+            </article>
+            <article class="panel">
+                <h2 class="panel-title">Recomendaciones</h2>
+                <div class="empty">Sin resultados todavía.</div>
+            </article>
+        </section>
+    </main>
+</div>
+</body>
+</html>

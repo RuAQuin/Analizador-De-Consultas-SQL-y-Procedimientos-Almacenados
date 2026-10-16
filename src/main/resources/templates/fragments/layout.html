@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+
+<head th:fragment="head(titulo)">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title th:text="${titulo} + ' · SQL Analyzer'">SQL Analyzer</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+
+<body>
+
+<aside th:fragment="sidebar" class="sidebar">
+    <a th:href="@{/}" class="brand">
+        <span class="brand-mark">SQL</span>
+        <span class="brand-name">Analyzer</span>
+    </a>
+    <nav class="nav">
+        <a th:href="@{/}" th:classappend="${activePage == 'inicio'} ? 'active'">
+            <span class="nav-num">00</span>Inicio
+        </a>
+        <a th:href="@{/bbdd}"
+           th:classappend="${activePage == 'bbdd'} ? 'active'">
+            <span class="nav-num">01</span>Creación de BBDD
+        </a>
+        <a th:href="@{/analisis}" th:classappend="${activePage == 'analisis'} ? 'active'">
+            <span class="nav-num">02</span>Análisis de consultas
+        </a>
+        <a th:href="@{/logs}" th:classappend="${activePage == 'logs'} ? 'active'">
+            <span class="nav-num">03</span>Logs JPA / Hibernate
+        </a>
+        <a sec:authorize="hasRole('ADMIN')" th:href="@{/usuarios}"
+           th:classappend="${activePage == 'usuarios'} ? 'active'">
+            <span class="nav-num">04</span>Usuarios
+        </a>
+    </nav>
+    <div class="sidebar-foot">
+        <div class="user">
+            <span class="user-name" sec:authentication="name">usuario</span>
+            <span class="user-role" sec:authorize="hasRole('ADMIN')">Administrador</span>
+            <span class="user-role" sec:authorize="hasRole('ANALYST')">Analista</span>
+        </div>
+        <form th:action="@{/logout}" method="post">
+            <button type="submit" class="btn btn-ghost btn-block">Cerrar sesión</button>
+        </form>
+    </div>
+</aside>
+
+<div th:fragment="mensajes" class="mensajes">
+    <div th:if="${aviso}" class="alert alert-info" role="status" th:text="${aviso}"></div>
+    <div th:if="${error}" class="alert alert-error" role="alert" th:text="${error}"></div>
+</div>
+
+</body>
+</html>

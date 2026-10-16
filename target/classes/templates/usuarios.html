@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Usuarios')}"></head>
+<body>
+<div class="shell">
+    <aside th:replace="~{fragments/layout :: sidebar}"></aside>
+
+    <main class="content">
+        <header class="page-head">
+            <span class="eyebrow">Administración</span>
+            <h1>Usuarios</h1>
+            <p class="muted">Alta, edición y baja de las cuentas de acceso a la aplicación.</p>
+        </header>
+
+        <div th:replace="~{fragments/layout :: mensajes}"></div>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2 class="panel-title">Cuentas registradas</h2>
+                <a th:href="@{/usuarios/nuevo}" class="btn btn-primary">Nuevo usuario</a>
+            </div>
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Usuario</th>
+                    <th>Rol</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:if="${#lists.isEmpty(usuarios)}">
+                    <td colspan="4" class="empty-row">Todavía no hay usuarios.</td>
+                </tr>
+                <tr th:each="usuario : ${usuarios}">
+                    <td th:text="${usuario.username}">usuario</td>
+                    <td th:text="${usuario.rol.name() == 'ADMIN'} ? 'Administrador' : 'Analista'">Rol</td>
+                    <td th:text="${usuario.habilitado} ? 'Activo' : 'Deshabilitado'">Activo</td>
+                    <td class="actions">
+                        <a th:href="@{/usuarios/{id}/editar(id=${usuario.id})}" class="btn btn-secondary btn-sm">Editar</a>
+                        <form th:action="@{/usuarios/{id}/eliminar(id=${usuario.id})}" method="post">
+                            <button type="submit" class="btn btn-danger btn-sm">Eliminar</button>
+                        </form>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </section>
+    </main>
+</div>
+</body>
+</html>

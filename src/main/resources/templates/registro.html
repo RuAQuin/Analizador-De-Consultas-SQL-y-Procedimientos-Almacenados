@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Crear cuenta')}"></head>
+<body class="login-body">
+<main class="login-card">
+    <div class="brand brand-lg">
+        <span class="brand-mark">SQL</span>
+        <span class="brand-name">Analyzer</span>
+    </div>
+    <p class="muted">Crea una cuenta de analista para usar la aplicación</p>
+
+    <form th:action="@{/registro}" th:object="${form}" method="post" class="form" novalidate>
+        <label class="field">
+            <span>Usuario</span>
+            <input type="text" th:field="*{username}" autocomplete="username" autofocus
+                   th:classappend="${#fields.hasErrors('username')} ? 'invalid'">
+            <small class="field-error" th:if="${#fields.hasErrors('username')}" th:errors="*{username}"></small>
+        </label>
+
+        <label class="field">
+            <span>Contraseña</span>
+            <input type="password" th:field="*{password}" autocomplete="new-password"
+                   th:classappend="${#fields.hasErrors('password')} ? 'invalid'">
+            <small class="field-error" th:if="${#fields.hasErrors('password')}" th:errors="*{password}"></small>
+        </label>
+
+        <label class="field">
+            <span>Repite la contraseña</span>
+            <input type="password" th:field="*{confirmPassword}" autocomplete="new-password"
+                   th:classappend="${#fields.hasErrors('confirmPassword')} ? 'invalid'">
+            <small class="field-error" th:if="${#fields.hasErrors('confirmPassword')}" th:errors="*{confirmPassword}"></small>
+        </label>
+
+        <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
+    </form>
+
+    <p class="muted login-foot">¿Ya tienes cuenta? <a th:href="@{/login}">Inicia sesión</a></p>
+</main>
+</body>
+</html>
