@@ -51,8 +51,10 @@ class SecurityTests {
     @Test
     @WithMockUser(roles = "ADMIN")
     void adminAccedeATodo() throws Exception {
-        mvc.perform(get("/")).andExpect(status().isOk());
         mvc.perform(get("/bbdd")).andExpect(status().isOk());
+        mvc.perform(get("/analisis")).andExpect(status().isOk());
+        mvc.perform(get("/logs")).andExpect(status().isOk());
+        mvc.perform(get("/usuarios")).andExpect(status().isOk());
     }
 
     @Test

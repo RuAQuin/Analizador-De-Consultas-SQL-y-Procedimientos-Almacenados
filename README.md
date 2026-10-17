@@ -1,6 +1,6 @@
 # SQL Analyzer · WebApp
 
-Interfaz web (Spring Boot 3.5 + Spring Security 6 + Thymeleaf, Java 21).
+Interfaz web del TFG (Spring Boot 3.5 + Spring Security 6 + Thymeleaf, Java 21).
 En esta fase solo contiene la interfaz: los formularios validan la entrada pero
 todavía no llaman a la API Python.
 
@@ -45,7 +45,7 @@ A partir de ahí, las cuentas se gestionan desde la propia aplicación:
 - Login por formulario propio (`/login`), logout por POST que invalida la sesión.
 - Registro público (`/registro`) y gestión de usuarios (`/usuarios`, solo ADMIN).
 - Contraseñas con BCrypt, nunca en claro ni en los formularios de edición.
-- Autorización por rol: `/usuarios/**` solo ADMIN; `/bbdd/**`, `/analisis/**` y `/logs/**` ADMIN o ANALYST.
+- Autorización por rol: `/usuarios/**` y `/bbdd/**` solo ADMIN; `/analisis/**` y `/logs/**` ADMIN o ANALYST.
 - CSRF activo en todos los formularios (incluida la subida de ficheros).
 - Cabeceras: Content-Security-Policy sin scripts ni estilos inline, `frame-ancestors 'none'`, Referrer-Policy.
 - Cookie de sesión `HttpOnly` y `SameSite=Strict`, caducidad 30 min, protección contra fijación de sesión.
