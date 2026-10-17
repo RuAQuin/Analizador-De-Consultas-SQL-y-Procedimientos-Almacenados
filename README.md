@@ -1,6 +1,7 @@
 # SQL Analyzer · WebApp
 
-Interfaz web del TFG (Spring Boot 3.5 + Spring Security 6 + Thymeleaf, Java 21).
+Interfaz web del Analizador de consultas SQL y Procedimientos Almacenados
+(Spring Boot 3.5 + Spring Security 6 + Thymeleaf, Java 21).
 En esta fase solo contiene la interfaz: los formularios validan la entrada pero
 todavía no llaman a la API Python.
 
