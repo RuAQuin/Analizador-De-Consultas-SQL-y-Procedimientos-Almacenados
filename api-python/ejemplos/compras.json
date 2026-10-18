@@ -1,0 +1,46 @@
+{
+  "nombre": "tienda",
+  "semilla": 0.42,
+  "tablas": [
+    {
+      "nombre": "b",
+      "tuplas": 2000000,
+      "columnas": [
+        {"nombre": "id",          "tipo": "bigint",        "identidad": true, "pk": true},
+        {"nombre": "cliente_id",  "tipo": "integer",       "fk": {"tabla": "a", "columna": "id"}},
+        {"nombre": "producto_id", "tipo": "integer",       "fk": {"tabla": "c"}},
+        {"nombre": "fecha",       "tipo": "timestamp",     "minimo": "2020-01-01", "maximo": "2025-12-31"},
+        {"nombre": "cantidad",    "tipo": "smallint",      "minimo": 1, "maximo": 5},
+        {"nombre": "importe",     "tipo": "numeric(12,2)", "minimo": 5, "maximo": 1000},
+        {"nombre": "estado",      "tipo": "varchar(20)",   "distribucion": [
+          {"valor": "ENTREGADO",  "porcentaje": 85},
+          {"valor": "ENVIADO",    "porcentaje": 10},
+          {"valor": "PENDIENTE",  "porcentaje": 4},
+          {"valor": "CANCELADO",  "porcentaje": 1}
+        ]}
+      ]
+    },
+    {
+      "nombre": "a",
+      "tuplas": 200000,
+      "columnas": [
+        {"nombre": "id",     "tipo": "integer",     "identidad": true, "pk": true},
+        {"nombre": "email",  "tipo": "varchar(80)", "unico": true},
+        {"nombre": "nombre", "tipo": "varchar(60)"},
+        {"nombre": "ciudad", "tipo": "varchar(40)", "nulable": true, "porcentaje_nulos": 5,
+         "distribucion": [{"valor": "Burgos", "porcentaje": 40}, {"valor": "Madrid", "porcentaje": 30}]},
+        {"nombre": "alta",   "tipo": "date",        "minimo": "2015-01-01", "maximo": "2025-12-31"}
+      ]
+    },
+    {
+      "nombre": "c",
+      "tuplas": 10000,
+      "columnas": [
+        {"nombre": "id",     "tipo": "integer",      "identidad": true, "pk": true},
+        {"nombre": "nombre", "tipo": "varchar(100)"},
+        {"nombre": "precio", "tipo": "numeric(10,2)", "minimo": 1, "maximo": 500},
+        {"nombre": "activo", "tipo": "boolean"}
+      ]
+    }
+  ]
+}
