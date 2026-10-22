@@ -14,11 +14,13 @@ public class UsuarioDetailsService implements UserDetailsService {
 
     private final UsuarioRepository repo;
 
+    // Constructor que inyecta el repositorio de usuarios.
     public UsuarioDetailsService(UsuarioRepository repo) {
         this.repo = repo;
     }
 
     @Override
+    // Método que carga un usuario por su nombre de usuario. Si el usuario no se encuentra, lanza una excepción. Si se encuentra, construye un objeto UserDetails con la información del usuario.
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
         Usuario usuario = repo.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("Usuario no encontrado: " + username));

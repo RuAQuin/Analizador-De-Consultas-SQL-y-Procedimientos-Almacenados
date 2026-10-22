@@ -20,6 +20,7 @@ class UsuarioTests {
     MockMvc mvc;
 
     @Test
+    // Verifica que la página de registro es accesible públicamente, permite crear una nueva cuenta y que el nuevo usuario puede iniciar sesión correctamente.
     void registroEsPublicoYCreaCuenta() throws Exception {
         mvc.perform(get("/registro")).andExpect(status().isOk());
 
@@ -34,6 +35,7 @@ class UsuarioTests {
     }
 
     @Test
+    // Verifica que el registro rechaza contraseñas distintas y usuarios duplicados.
     void registroRechazaContrasenasDistintasYUsuarioDuplicado() throws Exception {
         mvc.perform(post("/registro").with(csrf())
                 .param("username", "otro_usuario")
@@ -52,12 +54,14 @@ class UsuarioTests {
 
     @Test
     @WithMockUser(roles = "ANALYST")
+    // Verifica que un usuario con rol ANALYST no puede acceder a la página de gestión de usuarios (acceso denegado).
     void analistaNoAccedeAUsuarios() throws Exception {
         mvc.perform(get("/usuarios")).andExpect(status().isForbidden());
     }
 
     @Test
     @WithMockUser(username = "admin", roles = "ADMIN")
+    // Verifica que un usuario con rol ADMIN puede acceder a la página de gestión de usuarios, crear un nuevo usuario y que el nuevo usuario puede iniciar sesión correctamente.
     void adminGestionaUsuariosCrud() throws Exception {
         mvc.perform(get("/usuarios")).andExpect(status().isOk());
 

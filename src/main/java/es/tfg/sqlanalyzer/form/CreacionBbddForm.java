@@ -5,8 +5,12 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import lombok.Getter;
+import lombok.Setter;
 
 /** Datos introducidos en la pantalla "Creación de BBDD" (objetivo 1). */
+@Getter
+@Setter
 public class CreacionBbddForm {
 
     @NotBlank(message = "Indica el nombre de la base de datos")
@@ -26,15 +30,4 @@ public class CreacionBbddForm {
     private int filasPorTabla = 100;
 
     private boolean exportarPgDump = true;
-
-    public String getNombreBbdd() { return nombreBbdd; }
-    public void setNombreBbdd(String nombreBbdd) { this.nombreBbdd = nombreBbdd; }
-    public String getDefinicionTablas() { return definicionTablas; }
-    public void setDefinicionTablas(String definicionTablas) { this.definicionTablas = definicionTablas; }
-    public String getPeticionDatos() { return peticionDatos; }
-    public void setPeticionDatos(String peticionDatos) { this.peticionDatos = peticionDatos; }
-    public int getFilasPorTabla() { return filasPorTabla; }
-    public void setFilasPorTabla(int filasPorTabla) { this.filasPorTabla = filasPorTabla; }
-    public boolean isExportarPgDump() { return exportarPgDump; }
-    public void setExportarPgDump(boolean exportarPgDump) { this.exportarPgDump = exportarPgDump; }
 }

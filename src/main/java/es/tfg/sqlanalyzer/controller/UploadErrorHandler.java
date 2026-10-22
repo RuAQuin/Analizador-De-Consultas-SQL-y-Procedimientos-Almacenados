@@ -9,6 +9,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 public class UploadErrorHandler {
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
+    // Maneja la excepción lanzada cuando un fichero supera el tamaño máximo permitido. Redirige a la página de logs con un mensaje de error.
     public String ficheroDemasiadoGrande(RedirectAttributes ra) {
         ra.addFlashAttribute("error", "El fichero supera el tamaño máximo permitido (20 MB).");
         return "redirect:/logs";

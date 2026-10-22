@@ -23,6 +23,7 @@ public class DataInitializer implements ApplicationRunner {
     private final String analystUsername;
     private final String analystPassword;
 
+    // Constructor que inyecta las dependencias necesarias y los valores de configuración para los usuarios iniciales.
     public DataInitializer(
             UsuarioRepository repo,
             PasswordEncoder encoder,
@@ -39,6 +40,7 @@ public class DataInitializer implements ApplicationRunner {
     }
 
     @Override
+    // Método que se ejecuta al iniciar la aplicación. Si la tabla de usuarios está vacía, crea los usuarios iniciales (admin y analista).
     public void run(ApplicationArguments args) {
         if (repo.count() == 0) {
             repo.save(nuevoUsuario(adminUsername, adminPassword, Rol.ADMIN));
@@ -46,6 +48,7 @@ public class DataInitializer implements ApplicationRunner {
         }
     }
 
+    // Método privado para crear un nuevo usuario con los parámetros especificados.
     private Usuario nuevoUsuario(String username, String rawPassword, Rol rol) {
         Usuario usuario = new Usuario();
         usuario.setUsername(username);

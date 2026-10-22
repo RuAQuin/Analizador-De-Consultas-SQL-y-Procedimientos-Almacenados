@@ -12,22 +12,25 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.util.Locale;
 
-/** Objetivo 3: carga y análisis de logs JPA/Hibernate (.txt). */
+/** Carga y análisis de logs JPA/Hibernate (.txt). */
 @Controller
 @RequestMapping("/logs")
 public class LogsController {
 
     @ModelAttribute("activePage")
+    // Atributo de modelo que indica la página activa en la navegación.
     public String activePage() {
         return "logs";
     }
 
     @GetMapping
+    // Muestra el formulario de carga de logs. Si no hay un formulario en el modelo, se crea uno nuevo.
     public String formulario() {
         return "logs";
     }
 
     @PostMapping
+    // Procesa la carga de un fichero de logs. Valida el fichero y, si es correcto, redirige a la misma página con un mensaje de aviso.
     public String subir(@RequestParam("fichero") MultipartFile fichero, RedirectAttributes ra) {
         String nombre = StringUtils.cleanPath(
                 fichero.getOriginalFilename() == null ? "" : fichero.getOriginalFilename());
@@ -40,7 +43,7 @@ public class LogsController {
             ra.addFlashAttribute("error", "Solo se admiten ficheros .txt.");
             return "redirect:/logs";
         }
-        // TODO: enviar el fichero a la API Python (extracción y análisis de consultas).
+        // Implementar la invocación a la API Python (extracción y análisis de consultas).
         ra.addFlashAttribute("aviso", "Fichero «" + nombre + "» recibido ("
                 + Math.max(1, fichero.getSize() / 1024) + " KB). "
                 + "El análisis se realizará cuando la API Python esté conectada.");

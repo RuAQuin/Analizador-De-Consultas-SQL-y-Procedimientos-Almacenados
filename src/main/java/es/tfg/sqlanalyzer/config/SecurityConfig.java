@@ -25,6 +25,7 @@ import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWrite
 public class SecurityConfig {
 
     @Bean
+    // Configuración de la cadena de filtros de seguridad. Define las reglas de autorización, la página de login, la gestión de sesiones y las cabeceras HTTP.
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .authorizeHttpRequests(auth -> auth
@@ -56,11 +57,12 @@ public class SecurityConfig {
                     "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'"))
                 .referrerPolicy(ref -> ref.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.SAME_ORIGIN))
             );
-        // CSRF activo por defecto: Thymeleaf inserta el token en los formularios th:action.
+        // CSRF activo por defecto: para generar un valor aleatorio y único para cada sesión, que se debe enviar en cada petición POST, PUT, DELETE, etc.
         return http.build();
     }
 
     @Bean
+    // Bean que proporciona un codificador de contraseñas utilizando el algoritmo BCrypt. Este codificador se utiliza para almacenar las contraseñas de los usuarios de forma segura en la base de datos.
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }

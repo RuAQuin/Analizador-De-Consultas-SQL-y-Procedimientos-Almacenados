@@ -24,17 +24,20 @@ public class UsuarioController {
     }
 
     @ModelAttribute("activePage")
+    // Atributo de modelo que indica la página activa en la navegación.
     public String activePage() {
         return "usuarios";
     }
 
     @GetMapping
+    // Muestra la lista de usuarios existentes.
     public String listar(Model model) {
         model.addAttribute("usuarios", usuarioService.listarTodos());
         return "usuarios";
     }
 
     @GetMapping("/nuevo")
+    // Muestra el formulario de creación de un nuevo usuario. Si no hay un formulario en el modelo, se crea uno nuevo.
     public String nuevo(Model model) {
         if (!model.containsAttribute("form")) {
             model.addAttribute("form", new UsuarioForm());
@@ -44,6 +47,7 @@ public class UsuarioController {
     }
 
     @PostMapping
+    // Procesa el formulario de creación de un nuevo usuario. Valida los datos y, si son correctos, redirige a la lista de usuarios con un mensaje de aviso.
     public String crear(@Valid @ModelAttribute("form") UsuarioForm form,
                          BindingResult result,
                          Model model,
@@ -67,6 +71,7 @@ public class UsuarioController {
     }
 
     @GetMapping("/{id}/editar")
+    // Muestra el formulario de edición de un usuario existente. Si no hay un formulario en el modelo, se crea uno nuevo con los datos del usuario.
     public String editar(@PathVariable Long id, Model model) {
         if (!model.containsAttribute("form")) {
             Usuario usuario = usuarioService.obtener(id);
@@ -82,6 +87,7 @@ public class UsuarioController {
     }
 
     @PostMapping("/{id}")
+    // Procesa el formulario de edición de un usuario existente. Valida los datos y, si son correctos, redirige a la lista de usuarios con un mensaje de aviso.
     public String actualizar(@PathVariable Long id,
                               @Valid @ModelAttribute("form") UsuarioForm form,
                               BindingResult result,
@@ -110,6 +116,7 @@ public class UsuarioController {
     }
 
     @PostMapping("/{id}/eliminar")
+    // Procesa la eliminación de un usuario existente. Si el usuario a eliminar es el mismo que el autenticado, se muestra un mensaje de error. Si la eliminación es correcta, se redirige a la lista de usuarios con un mensaje de aviso.
     public String eliminar(@PathVariable Long id, Authentication auth, RedirectAttributes ra) {
         Usuario usuario = usuarioService.obtener(id);
         if (usuario.getUsername().equals(auth.getName())) {

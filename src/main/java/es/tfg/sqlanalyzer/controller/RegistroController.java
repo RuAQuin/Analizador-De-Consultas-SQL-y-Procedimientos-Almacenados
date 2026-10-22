@@ -22,6 +22,7 @@ public class RegistroController {
     }
 
     @GetMapping("/registro")
+    // Muestra el formulario de registro de nuevas cuentas. Si no hay un formulario en el modelo, se crea uno nuevo.
     public String formulario(Model model) {
         if (!model.containsAttribute("form")) {
             model.addAttribute("form", new RegistroForm());
@@ -30,6 +31,7 @@ public class RegistroController {
     }
 
     @PostMapping("/registro")
+    // Procesa el formulario de registro de nuevas cuentas. Valida los datos y, si son correctos, redirige a la página de login con un mensaje de aviso.
     public String registrar(@Valid @ModelAttribute("form") RegistroForm form,
                              BindingResult result,
                              RedirectAttributes ra) {
