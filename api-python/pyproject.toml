@@ -1,0 +1,25 @@
+[project]
+name = "sqlanalyzer-api"
+version = "0.1.0"
+description = "API Python del Analizador SQL (TFG): plano de datos y plano de consultas"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pglast>=7",
+    "pydantic>=2.7",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["httpx>=0.27", "pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

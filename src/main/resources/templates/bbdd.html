@@ -9,14 +9,14 @@
         <header class="page-head">
             <span class="eyebrow">Módulo 01</span>
             <h1>Creación de BBDD</h1>
-            <p class="muted">Generar la base de datos, insertar datos según la petición y exportar con pg_dump.</p>
+            <p class="muted">Escribe el DDL de las tablas, define el prototipo de datos y genera la base de datos.</p>
         </header>
 
         <div th:replace="~{fragments/layout :: mensajes}"></div>
 
         <div class="grid-2">
             <form th:action="@{/bbdd}" th:object="${form}" method="post" class="panel form" novalidate>
-                <h2 class="panel-title">Parámetros</h2>
+                <h2 class="panel-title">1. DDL de creación de las tablas</h2>
 
                 <label class="field">
                     <span>Nombre de la base de datos</span>
@@ -26,45 +26,36 @@
                 </label>
 
                 <label class="field">
-                    <span>Definición de tablas (DDL)</span>
-                    <textarea th:field="*{definicionTablas}" rows="10" class="code" spellcheck="false"
-                              placeholder="CREATE TABLE cliente (&#10;  id SERIAL PRIMARY KEY,&#10;  nombre VARCHAR(100) NOT NULL&#10;);"
+                    <span>DDL (solo sentencias CREATE TABLE)</span>
+                    <textarea th:field="*{definicionTablas}" rows="14" class="code" spellcheck="false"
+                              placeholder="CREATE TABLE clientes (&#10;  id integer PRIMARY KEY,&#10;  nombre varchar(100) NOT NULL&#10;);&#10;&#10;CREATE TABLE compras (&#10;  id bigint PRIMARY KEY,&#10;  cliente_id integer NOT NULL REFERENCES clientes(id)&#10;);"
                               th:classappend="${#fields.hasErrors('definicionTablas')} ? 'invalid'"></textarea>
-                    <small class="field-error" th:if="${#fields.hasErrors('definicionTablas')}" th:errors="*{definicionTablas}"></small>
+                    <small class="field-error" th:each="err : ${#fields.errors('definicionTablas')}" th:text="${err}"></small>
                 </label>
 
-                <label class="field">
-                    <span>Petición de datos</span>
-                    <textarea th:field="*{peticionDatos}" rows="3"
-                              placeholder="Ej.: clientes con nombres españoles, pedidos de los últimos 6 meses…"></textarea>
-                    <small class="field-error" th:if="${#fields.hasErrors('peticionDatos')}" th:errors="*{peticionDatos}"></small>
-                </label>
-
-                <div class="row">
-                    <label class="field field-sm">
-                        <span>Filas por tabla</span>
-                        <input type="number" th:field="*{filasPorTabla}" min="0" max="100000"
-                               th:classappend="${#fields.hasErrors('filasPorTabla')} ? 'invalid'">
-                        <small class="field-error" th:if="${#fields.hasErrors('filasPorTabla')}" th:errors="*{filasPorTabla}"></small>
-                    </label>
-                    <label class="check">
-                        <input type="checkbox" th:field="*{exportarPgDump}">
-                        <span>Exportar script con pg_dump</span>
-                    </label>
-                </div>
-
-                <button type="submit" class="btn btn-primary">Generar base de datos</button>
+                <button type="submit" class="btn btn-primary">Validar DDL</button>
             </form>
 
             <section class="panel">
-                <h2 class="panel-title">Resultado</h2>
+                <h2 class="panel-title">Progreso</h2>
                 <ol class="steps">
-                    <li><span class="step-dot"></span>Generar BBDD</li>
-                    <li><span class="step-dot"></span>Insertar datos</li>
-                    <li><span class="step-dot"></span>Exportar con pg_dump</li>
+                    <li th:classappend="${tablas != null} ? 'step-done'"><span class="step-dot"></span>DDL parseado con pglast</li>
+                    <li><span class="step-dot"></span>Árbol de agrupación</li>
+                    <li><span class="step-dot"></span>Prototipo de datos</li>
+                    <li><span class="step-dot"></span>CREATE DATABASE / CREATE TABLE</li>
+                    <li><span class="step-dot"></span>Inserción de datos</li>
+                    <li><span class="step-dot"></span>ANALYZE</li>
+                    <li><span class="step-dot"></span>pg_dump y registro</li>
                 </ol>
-                <div class="empty">
-                    Aquí aparecerá el progreso y el enlace de descarga del script exportado.
+
+                <div th:if="${tablas != null}">
+                    <h3 class="panel-subtitle">Tablas detectadas</h3>
+                    <ul class="lista-tablas">
+                        <li th:each="t : ${tablas}" class="code" th:text="${t}"></li>
+                    </ul>
+                </div>
+                <div th:if="${tablas == null}" class="empty">
+                    Cuando el DDL sea correcto aparecerán aquí las tablas detectadas.
                 </div>
             </section>
         </div>

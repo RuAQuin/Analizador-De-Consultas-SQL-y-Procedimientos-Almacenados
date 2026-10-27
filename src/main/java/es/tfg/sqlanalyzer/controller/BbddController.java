@@ -1,5 +1,9 @@
 package es.tfg.sqlanalyzer.controller;
 
+import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
+import es.tfg.sqlanalyzer.api.ApiPythonClient;
+import es.tfg.sqlanalyzer.api.ErrorDdl;
+import es.tfg.sqlanalyzer.api.ValidacionDdl;
 import es.tfg.sqlanalyzer.form.CreacionBbddForm;
 import jakarta.validation.Valid;
 import org.springframework.stereotype.Controller;
@@ -11,10 +15,16 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-/** Generación de BBDD, inserción de datos y exportación con pg_dump. */
+/** Módulo 1: generación de BBDD. */
 @Controller
 @RequestMapping("/bbdd")
 public class BbddController {
+
+    private final ApiPythonClient api;
+
+    public BbddController(ApiPythonClient api) {
+        this.api = api;
+    }
 
     @ModelAttribute("activePage")
     // Atributo de modelo que indica la página activa en la navegación.
@@ -32,18 +42,34 @@ public class BbddController {
     }
 
     @PostMapping
-    // Procesa el formulario de creación de BBDD. Valida los datos y, si son correctos, redirige a la misma página con un mensaje de aviso.
-    public String crear(@Valid @ModelAttribute("form") CreacionBbddForm form,
-                        BindingResult result,
-                        RedirectAttributes ra) {
+    // Paso 1: la API parsea el DDL con pglast. Si falla, se vuelve al formulario
+    // con el DDL escrito y los errores, para que el usuario lo corrija.
+    public String validarDdl(@Valid @ModelAttribute("form") CreacionBbddForm form,
+                             BindingResult result,
+                             Model model,
+                             RedirectAttributes ra) {
         if (result.hasErrors()) {
             return "bbdd";
         }
-        // Implementar la invocación a la API Python (generación, inserción y pg_dump).
+
+        ValidacionDdl validacion;
+        try {
+            validacion = api.validarDdl(form.getDefinicionTablas());
+        } catch (ApiNoDisponibleException e) {
+            model.addAttribute("error", e.getMessage());
+            return "bbdd";
+        }
+
+        if (!validacion.valido()) {
+            for (ErrorDdl error : validacion.errores()) {
+                result.rejectValue("definicionTablas", "ddl.invalido", error.descripcion());
+            }
+            return "bbdd";
+        }
+
         ra.addFlashAttribute("form", form);
-        ra.addFlashAttribute("aviso",
-                "Petición validada. La generación de «" + form.getNombreBbdd()
-                + "» se realizará cuando la API Python esté conectada.");
+        ra.addFlashAttribute("tablas", validacion.tablas());
+        ra.addFlashAttribute("aviso", "El DDL es correcto: pglast lo ha parseado sin errores.");
         return "redirect:/bbdd";
     }
 }

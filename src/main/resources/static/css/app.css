@@ -218,6 +218,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .steps { list-style: none; padding: 0; margin: 0 0 1rem; display: flex; flex-direction: column; gap: .6rem; }
 .steps li { display: flex; align-items: center; gap: .6rem; color: var(--muted); }
 .step-dot { width: .7rem; height: .7rem; border-radius: 50%; border: 2px solid var(--line); }
+.step-done { color: var(--ink) !important; }
+.step-done .step-dot { background: var(--accent); border-color: var(--accent); }
+.panel-subtitle { font-size: .85rem; font-weight: 600; margin: 0 0 .5rem; }
+.lista-tablas { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .25rem; }
 
 .table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .table th, .table td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid var(--line); }

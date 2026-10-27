@@ -1,8 +1,8 @@
 # SQL Analyzer · WebApp
 
 Interfaz web (Spring Boot 3.5 + Spring Security 6 + Thymeleaf, Java 21).
-En esta fase solo contiene la interfaz: los formularios validan la entrada pero
-todavía no llaman a la API Python.
+La WebApp nunca se conecta a las BBDD: todo pasa por la API Python (`app.api.url`,
+variable `API_URL`, por defecto http://localhost:8000). Ver `api-python/README.md`.
 
 ## Arrancar
 
