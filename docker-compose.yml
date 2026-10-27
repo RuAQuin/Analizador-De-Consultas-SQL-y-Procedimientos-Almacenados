@@ -1,0 +1,52 @@
+# Entorno del Analizador SQL: PostgreSQL objetivo + API Python.
+# La WebApp Spring Boot se arranca aparte (mvn spring-boot:run) y llama a la API
+# en http://localhost:8000; nunca se conecta directamente a PostgreSQL.
+#
+#   docker compose up -d --build      # arrancar
+#   docker compose down               # parar (los datos se conservan)
+#   docker compose down -v            # parar y borrar BBDD y dumps
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: sqlanalyzer-postgres
+    environment:
+      POSTGRES_USER: ${PG_USUARIO:-postgres}
+      POSTGRES_PASSWORD: ${PG_CONTRASENA:-postgres}
+      POSTGRES_DB: postgres
+    # 5433 en el host para no chocar con un PostgreSQL local en el 5432.
+    ports:
+      - "${PG_PUERTO_HOST:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: ./api-python
+    image: sqlanalyzer-api
+    container_name: sqlanalyzer-api
+    environment:
+      PG_HOST: postgres
+      PG_PUERTO: "5432"
+      PG_USUARIO: ${PG_USUARIO:-postgres}
+      PG_CONTRASENA: ${PG_CONTRASENA:-postgres}
+      PG_BD_MANTENIMIENTO: postgres
+      PG_BD_REPOSITORIO: sqlanalyzer_repositorio
+      DIRECTORIO_DUMPS: /datos/dumps
+    ports:
+      - "${API_PUERTO_HOST:-8000}:8000"
+    volumes:
+      - dumps:/datos/dumps
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  dumps:

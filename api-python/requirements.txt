@@ -1,3 +1,0 @@
-pglast==8.6
-psycopg[binary]==3.3.6
-pydantic==2.14.1
