@@ -220,8 +220,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .step-dot { width: .7rem; height: .7rem; border-radius: 50%; border: 2px solid var(--line); }
 .step-done { color: var(--ink) !important; }
 .step-done .step-dot { background: var(--accent); border-color: var(--accent); }
-.panel-subtitle { font-size: .85rem; font-weight: 600; margin: 0 0 .5rem; }
+.step-sub { padding-left: 1.3rem; font-size: .9rem; }
+.panel-subtitle { font-size: .85rem; font-weight: 600; margin: 1rem 0 .5rem; }
 .lista-tablas { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .25rem; }
+.ddl-final { margin-top: .75rem; }
+.ddl-final summary { cursor: pointer; font-size: .85rem; margin-bottom: .5rem; }
 
 .table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .table th, .table td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid var(--line); }

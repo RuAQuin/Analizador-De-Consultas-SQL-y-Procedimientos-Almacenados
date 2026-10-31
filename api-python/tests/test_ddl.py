@@ -64,7 +64,10 @@ cliente = TestClient(app)
 def test_endpoint_ddl_valido():
     r = cliente.post("/bbdd/ddl", json={"ddl": DDL_VALIDO})
     assert r.status_code == 200
-    assert r.json() == {"valido": True, "tablas": ["clientes", "compras"], "errores": []}
+    cuerpo = r.json()
+    assert cuerpo["valido"] is True
+    assert cuerpo["tablas"] == ["clientes", "compras"]
+    assert cuerpo["errores"] == []
 
 
 def test_endpoint_ddl_con_error():

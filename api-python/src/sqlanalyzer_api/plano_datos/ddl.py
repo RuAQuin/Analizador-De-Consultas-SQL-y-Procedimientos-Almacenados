@@ -32,7 +32,7 @@ class ResultadoDdl:
         return not self.errores
 
 
-def _linea_columna(texto: str, posicion: int) -> tuple[int, int]:
+def linea_columna(texto: str, posicion: int) -> tuple[int, int]:
     """Convierte un desplazamiento (0-based) en línea y columna (1-based).
     Devuelva la fila y columna del caracter objetivo."""
     previo = texto[:max(posicion, 0)]
@@ -41,7 +41,7 @@ def _linea_columna(texto: str, posicion: int) -> tuple[int, int]:
     return linea, columna
 
 
-def _nombre_tabla(relacion: ast.RangeVar) -> str:
+def nombre_tabla(relacion: ast.RangeVar) -> str:
     """Devuelve el nombre de la tabla."""
     return f"{relacion.schemaname}.{relacion.relname}" if relacion.schemaname else relacion.relname
 
@@ -55,9 +55,9 @@ def parsear_ddl(ddl: str) -> ResultadoDdl:
         sentencias = parse_sql(ddl)
     except ParseError as e:
         mensaje = f"Error de sintaxis: {e.args[0]}"
-        # pglast indica la posición del error contando desde 1.
-        if e.location:
-            linea, columna = _linea_columna(ddl, e.location - 1)
+        # pglast devuelve (mensaje, posición del error contada desde 0).
+        if len(e.args) > 1 and isinstance(e.args[1], int):
+            linea, columna = linea_columna(ddl, e.args[1])
             return ResultadoDdl(errores=[ErrorDdl(mensaje, linea, columna)])
         return ResultadoDdl(errores=[ErrorDdl(mensaje)])
 
@@ -68,9 +68,9 @@ def parsear_ddl(ddl: str) -> ResultadoDdl:
     errores: list[ErrorDdl] = []
     for raw in sentencias:
         if isinstance(raw.stmt, ast.CreateStmt):
-            tablas.append(_nombre_tabla(raw.stmt.relation))
+            tablas.append(nombre_tabla(raw.stmt.relation))
         else:
-            linea, columna = _linea_columna(ddl, raw.stmt_location or 0)
+            linea, columna = linea_columna(ddl, raw.stmt_location or 0)
             tipo = type(raw.stmt).__name__
             errores.append(ErrorDdl(
                 f"Solo se admiten sentencias CREATE TABLE (se ha encontrado {tipo})", linea, columna))

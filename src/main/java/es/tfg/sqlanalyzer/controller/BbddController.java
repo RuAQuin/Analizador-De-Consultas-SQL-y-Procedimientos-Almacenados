@@ -42,7 +42,8 @@ public class BbddController {
     }
 
     @PostMapping
-    // Paso 1: la API parsea el DDL con pglast. Si falla, se vuelve al formulario
+    // Paso 1: la API parsea el DDL con pglast. Paso 2.1: lee las FK y ordena las tablas con Kahn.
+    // Si algo falla (sintaxis, FK a una tabla inexistente, ciclo que no se puede romper...), se vuelve al formulario
     // con el DDL escrito y los errores, para que el usuario lo corrija.
     public String validarDdl(@Valid @ModelAttribute("form") CreacionBbddForm form,
                              BindingResult result,
@@ -67,9 +68,19 @@ public class BbddController {
             return "bbdd";
         }
 
+        // Paso 2.1: FK leídas y orden de Kahn, para mostrarlos en el panel de progreso.
+        // Si había ciclos, la API los ha roto con tablas intermedias: se muestran junto al DDL final.
         ra.addFlashAttribute("form", form);
-        ra.addFlashAttribute("tablas", validacion.tablas());
-        ra.addFlashAttribute("aviso", "El DDL es correcto: pglast lo ha parseado sin errores.");
+        ra.addFlashAttribute("orden", validacion.orden());
+        ra.addFlashAttribute("clavesForaneas", validacion.clavesForaneas());
+        ra.addFlashAttribute("tablasIntermedias", validacion.tablasIntermedias());
+        ra.addFlashAttribute("ddlFinal", validacion.ddlFinal());
+        String aviso = "El DDL es correcto: pglast lo ha parseado y las tablas se han ordenado con Kahn.";
+        if (validacion.tablasIntermedias() != null && !validacion.tablasIntermedias().isEmpty()) {
+            aviso += " Las FK formaban ciclos y se han roto creando "
+                    + validacion.tablasIntermedias().size() + " tabla(s) intermedia(s).";
+        }
+        ra.addFlashAttribute("aviso", aviso);
         return "redirect:/bbdd";
     }
 }

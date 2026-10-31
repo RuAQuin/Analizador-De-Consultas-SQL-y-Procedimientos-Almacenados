@@ -39,8 +39,11 @@
             <section class="panel">
                 <h2 class="panel-title">Progreso</h2>
                 <ol class="steps">
-                    <li th:classappend="${tablas != null} ? 'step-done'"><span class="step-dot"></span>DDL parseado con pglast</li>
+                    <li th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>DDL parseado con pglast</li>
                     <li><span class="step-dot"></span>Árbol de agrupación</li>
+                    <li class="step-sub" th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>FK leídas y orden de Kahn</li>
+                    <li class="step-sub"><span class="step-dot"></span>FK de agrupación y árboles</li>
+                    <li class="step-sub"><span class="step-dot"></span>Kahn entre árboles</li>
                     <li><span class="step-dot"></span>Prototipo de datos</li>
                     <li><span class="step-dot"></span>CREATE DATABASE / CREATE TABLE</li>
                     <li><span class="step-dot"></span>Inserción de datos</li>
@@ -48,14 +51,42 @@
                     <li><span class="step-dot"></span>pg_dump y registro</li>
                 </ol>
 
-                <div th:if="${tablas != null}">
-                    <h3 class="panel-subtitle">Tablas detectadas</h3>
-                    <ul class="lista-tablas">
-                        <li th:each="t : ${tablas}" class="code" th:text="${t}"></li>
+                <div th:if="${orden != null}">
+                    <h3 class="panel-subtitle">Orden de creación (Kahn)</h3>
+                    <table class="table">
+                        <thead><tr><th>#</th><th>Tabla</th><th>Nivel</th></tr></thead>
+                        <tbody>
+                            <tr th:each="t, it : ${orden}">
+                                <td th:text="${it.count}">1</td>
+                                <td class="code" th:text="${t.tabla}">clientes</td>
+                                <td th:text="${t.nivel}">0</td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <h3 class="panel-subtitle">Claves foráneas</h3>
+                    <ul class="lista-tablas" th:if="${!#lists.isEmpty(clavesForaneas)}">
+                        <li th:each="fk : ${clavesForaneas}" class="code" th:text="${fk.descripcion()}"></li>
                     </ul>
+                    <p class="muted" th:if="${#lists.isEmpty(clavesForaneas)}">El DDL no tiene claves foráneas.</p>
+
+                    <div th:if="${tablasIntermedias != null and !#lists.isEmpty(tablasIntermedias)}">
+                        <h3 class="panel-subtitle">Ciclos resueltos con tablas intermedias</h3>
+                        <ul class="lista-tablas">
+                            <li th:each="ti : ${tablasIntermedias}">
+                                <span class="code" th:text="${ti.tabla}">tabla</span>
+                                sustituye a
+                                <span class="code" th:text="${ti.sustituye.descripcion()}">fk</span>
+                            </li>
+                        </ul>
+                        <details class="ddl-final">
+                            <summary>Ver el DDL final</summary>
+                            <pre class="code-block" th:text="${ddlFinal}"></pre>
+                        </details>
+                    </div>
                 </div>
-                <div th:if="${tablas == null}" class="empty">
-                    Cuando el DDL sea correcto aparecerán aquí las tablas detectadas.
+                <div th:if="${orden == null}" class="empty">
+                    Cuando el DDL sea correcto aparecerán aquí el orden de creación de las tablas y sus claves foráneas.
                 </div>
             </section>
         </div>
