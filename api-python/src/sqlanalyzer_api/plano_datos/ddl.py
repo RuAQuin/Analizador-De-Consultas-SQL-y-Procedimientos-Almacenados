@@ -27,6 +27,7 @@ class ResultadoDdl:
     # Árbol devuelto por pglast; se reutilizará en los pasos siguientes.
     sentencias: tuple[ast.RawStmt, ...] = ()
 
+    # Si hay errores --> valida = false.
     @property
     def valido(self) -> bool:
         return not self.errores
@@ -48,11 +49,13 @@ def nombre_tabla(relacion: ast.RangeVar) -> str:
 
 def parsear_ddl(ddl: str) -> ResultadoDdl:
     """Parsea el DDL con pglast. Devuelve las tablas definidas o los errores encontrados."""
+    # DDL vacío
     if not ddl or not ddl.strip():
         return ResultadoDdl(errores=[ErrorDdl("El DDL está vacío: escribe al menos un CREATE TABLE")])
 
     try:
         sentencias = parse_sql(ddl)
+    # Monta el mensaje con el texto de PostgreSQL.
     except ParseError as e:
         mensaje = f"Error de sintaxis: {e.args[0]}"
         # pglast devuelve (mensaje, posición del error contada desde 0).
@@ -61,14 +64,17 @@ def parsear_ddl(ddl: str) -> ResultadoDdl:
             return ResultadoDdl(errores=[ErrorDdl(mensaje, linea, columna)])
         return ResultadoDdl(errores=[ErrorDdl(mensaje)])
 
+    # No hay ninguna sentencia
     if not sentencias:
         return ResultadoDdl(errores=[ErrorDdl("El DDL no contiene sentencias: escribe al menos un CREATE TABLE")])
 
     tablas: list[str] = []
     errores: list[ErrorDdl] = []
     for raw in sentencias:
+        # Si es un CREATE TABLE, se añade el nombre de la tabla a tablas.
         if isinstance(raw.stmt, ast.CreateStmt):
             tablas.append(nombre_tabla(raw.stmt.relation))
+        # Si no lo es, se añade un error con el tipo de nodo.
         else:
             linea, columna = linea_columna(ddl, raw.stmt_location or 0)
             tipo = type(raw.stmt).__name__

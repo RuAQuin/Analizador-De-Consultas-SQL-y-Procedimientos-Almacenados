@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from .plano_datos import analizar_dependencias, parsear_ddl, resolver_ciclos
+from .plano_datos import analizar_dependencias, formar_arboles, parsear_ddl, resolver_ciclos
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
@@ -39,6 +39,20 @@ class TablaIntermediaDto(BaseModel):
     sustituye: ClaveForaneaDto
 
 
+class NodoArbolDto(BaseModel):
+    tabla: str
+    # Tabla de la que cuelga (None en la raíz).
+    padre: str | None
+    nivel: int
+    fk_agrupacion: ClaveForaneaDto | None
+
+
+class ArbolDto(BaseModel):
+    raiz: str
+    # Preorden: cada tabla aparece antes que las que cuelgan de ella.
+    nodos: list[NodoArbolDto]
+
+
 class RespuestaDdl(BaseModel):
     valido: bool
     tablas: list[str]
@@ -50,6 +64,8 @@ class RespuestaDdl(BaseModel):
     tablas_intermedias: list[TablaIntermediaDto] = []
     # DDL que se usará en adelante: el del usuario o, si había ciclos, el reescrito.
     ddl_final: str | None = None
+    # Paso 2.2: árboles de agrupación (cada tabla cuelga de su FK de agrupación).
+    arboles: list[ArbolDto] = []
 
 
 @app.get("/salud")
@@ -61,6 +77,7 @@ def salud() -> dict[str, str]:
 @app.post("/bbdd/ddl", response_model=RespuestaDdl)
 def validar_ddl(peticion: PeticionDdl) -> RespuestaDdl:
     """Paso 1: pglast parsea el DDL. Paso 2.1: se leen sus FK y se ordenan las tablas con Kahn.
+    Paso 2.2: se elige la FK de agrupación de cada tabla y se forman los árboles.
 
     Si las FK forman un ciclo, el sistema lo rompe con tablas intermedias y vuelve
     a analizar el DDL resultante.
@@ -89,7 +106,15 @@ def validar_ddl(peticion: PeticionDdl) -> RespuestaDdl:
         orden=[TablaOrdenadaDto(tabla=o.tabla, nivel=o.nivel) for o in dependencias.orden],
         tablas_intermedias=[TablaIntermediaDto(tabla=i.tabla, sustituye=_fks([i.sustituye])[0]) for i in intermedias],
         ddl_final=ddl if dependencias.valido else None,
+        arboles=_arboles(formar_arboles(dependencias)) if dependencias.valido else [],
     )
+
+
+def _arboles(arboles) -> list[ArbolDto]:
+    return [ArbolDto(raiz=a.raiz, nodos=[
+        NodoArbolDto(tabla=n.tabla, padre=n.padre, nivel=n.nivel,
+                     fk_agrupacion=_fks([n.fk_agrupacion])[0] if n.fk_agrupacion else None)
+        for n in a.nodos]) for a in arboles]
 
 
 def _fks(fks) -> list[ClaveForaneaDto]:

@@ -6,9 +6,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY pyproject.toml .
+# El código se usa directamente desde src (sin instalarlo como paquete): así cambiar el
+# código no obliga a descargar nada y la capa de dependencias queda en caché.
+ENV PYTHONPATH=/app/src
 COPY src ./src
-RUN pip install --no-cache-dir --no-deps . && rm -rf build
 
 RUN useradd --create-home api
 USER api

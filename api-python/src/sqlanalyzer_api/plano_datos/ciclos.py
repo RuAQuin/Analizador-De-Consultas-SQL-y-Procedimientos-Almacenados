@@ -31,7 +31,7 @@ from .ddl import ErrorDdl, nombre_tabla
 from .dependencias import ClaveForanea, _solo_ciclos, leer_fks
 
 # Tipos seriales: en la tabla intermedia la columna referencia un valor ya generado.
-# Se traduce al tipo base.
+# Traducción al tipo base (los seriales sirven para hacer secuencias).
 _SERIALES = {"smallserial": "smallint", "serial2": "smallint", "serial": "integer",
              "serial4": "integer", "bigserial": "bigint", "serial8": "bigint"}
 # Restricciones de columna que se pueden trasladar con la FK a la tabla intermedia.
@@ -44,6 +44,7 @@ class TablaIntermedia:
     tabla: str
     # FK original que sustituye.
     sustituye: ClaveForanea
+    # Guarda el CREATE TABLE...
     ddl: str
 
 
@@ -51,7 +52,9 @@ class TablaIntermedia:
 class ResolucionCiclos:
     # DDL con los ciclos resueltos (igual al original si no había ciclos).
     ddl: str
+    # Tablas intermedias.
     intermedias: list[TablaIntermedia] = field(default_factory=list)
+    # Errores.
     errores: list[ErrorDdl] = field(default_factory=list)
 
 
@@ -69,15 +72,18 @@ class _Columnas(Visitor):
 def _columnas_en(expresion) -> set[str]:
     if expresion is None:
         return set()
+    # Recoge las columnas de las tablas de cada expresión del DDL
     v = _Columnas()
     v(expresion)
+    # Devuelve las columnas que se usan en el DDL.
     return v.nombres
 
 
+# Convierte el nodo en una tupla de String.
 def _nombres(lista) -> tuple[str, ...]:
     return tuple(n.sval for n in lista or ())
 
-
+# Diccionario nombre_columa --> ColumnDef
 def _definiciones(crear: ast.CreateStmt) -> dict[str, ast.ColumnDef]:
     return {e.colname: e for e in crear.tableElts or () if isinstance(e, ast.ColumnDef)}
 
@@ -94,7 +100,7 @@ def _clave_primaria(crear: ast.CreateStmt) -> tuple[str, ...]:
             return _nombres(e.keys)
     return ()
 
-# Escribe el tipo y cambia los seriales
+# Escribe el tipo y cambia los seriales a su valor base.
 def _tipo(columna: ast.ColumnDef) -> str:
     tipo = RawStream()(columna.typeName)
     return _SERIALES.get(tipo.lower(), tipo)
@@ -106,7 +112,7 @@ def _motivo_no_trasladable(crear: ast.CreateStmt, fk: ClaveForanea) -> str | Non
     # No hay PK
     if not pk:
         return f"«{fk.tabla}» no tiene PK"
-    # Una columna de la FK forma parte de la PK
+    # Una columna de la FK forma parte de la PK padre
     if set(fk.columnas) & set(pk):
         return f"la FK de «{fk.tabla}» ({', '.join(fk.columnas)}) forma parte de su PK"
     definiciones = _definiciones(crear)
@@ -127,7 +133,7 @@ def _motivo_no_trasladable(crear: ast.CreateStmt, fk: ClaveForanea) -> str | Non
             usadas = set(_nombres(e.keys)) | set(_nombres(e.fk_attrs)) | _columnas_en(e.raw_expr)
             if not es_esta_fk and usadas & set(fk.columnas):
                 return f"las columnas de la FK de «{fk.tabla}» se usan en otras restricciones de la tabla"
-        # Si es restricción de columna
+        # Si la restricción está escrita en la línea de otra columna.
         elif isinstance(e, ast.ColumnDef) and e.colname not in fk.columnas:
             for c in e.constraints or ():
                 if _columnas_en(c.raw_expr) & set(fk.columnas):
@@ -142,7 +148,7 @@ def _alcanzable(origen: str, destino: str, aristas: list[ClaveForanea]) -> bool:
         actual = pendientes.pop()
         if actual == destino:
             return True
-        for fk in aristas:
+        for fk in aristas: # Se recorren todas las aristas
             if fk.tabla_padre == actual and fk.tabla not in vistos:
                 vistos.add(fk.tabla)
                 pendientes.append(fk.tabla)
@@ -157,6 +163,7 @@ def _sin_ordenar(tablas: list[str], aristas: list[ClaveForanea]) -> list[str]:
     while cambio:
         cambio = False
         for t in tablas:
+            # Si no tienen tablas pendientes para su creación se añaden a hechas.
             if t not in hechas and pendientes[t] <= hechas:
                 hechas.add(t)
                 cambio = True
@@ -169,36 +176,44 @@ def _sql_intermedia(nombre: str, hija: ast.CreateStmt, fk: ClaveForanea, pk: tup
     unica = any(c.contype == enums.ConstrType.CONSTR_UNIQUE
                 for col in fk.columnas for c in definiciones[col].constraints or ())
     # Columnas de la tabla intermedia: PK de la hija (con prefijo) + columnas de la FK.
-    cols_pk = [f"{fk.tabla.split('.')[-1]}_{c}" for c in pk]
-    cols_fk = [c if c not in cols_pk else f"{c}_ref" for c in fk.columnas]
+    cols_pk = [f"{fk.tabla.split('.')[-1]}_{c}" for c in pk] # Nombre Tabla + PK
+    cols_fk = [c if c not in cols_pk else f"{c}_ref" for c in fk.columnas] # Nombre FK (si ya existe se añade _red)
     padre_cols = f" ({', '.join(fk.columnas_padre)})" if fk.columnas_padre else ""
 
     # Creación de la tabla manteniendo sus restricciones
     lineas = []
+    # PK simple --> Una sola línea con PRIMARY KEY REFERENCES hija (pk)
     if len(pk) == 1:
         lineas.append(f"{cols_pk[0]} {_tipo(definiciones[pk[0]])} PRIMARY KEY REFERENCES {fk.tabla} ({pk[0]})")
+    # PK compuesta --> Columnas NOT NULL
     else:
         lineas += [f"{c} {_tipo(definiciones[o])} NOT NULL" for c, o in zip(cols_pk, pk)]
+    # FK simple --> NOT NULL + REFERENCES padre
     if len(fk.columnas) == 1:
         lineas.append(f"{cols_fk[0]} {_tipo(definiciones[fk.columnas[0]])} NOT NULL"
                       f"{' UNIQUE' if unica else ''} REFERENCES {fk.tabla_padre}{padre_cols}")
+    # FK compuesta --> columnas NOT NULL.
     else:
         lineas += [f"{c} {_tipo(definiciones[o])} NOT NULL" for c, o in zip(cols_fk, fk.columnas)]
+    # PK compuesta --> PRIMARY KEY compuesta al final + FOREIGN KEY de la tabla
     if len(pk) > 1:
         lineas.append(f"PRIMARY KEY ({', '.join(cols_pk)})")
         lineas.append(f"FOREIGN KEY ({', '.join(cols_pk)}) REFERENCES {fk.tabla} ({', '.join(pk)})")
+    # FK compuesta --> FOREIGN KEY de tabla.
     if len(fk.columnas) > 1:
         if unica:
             lineas.append(f"UNIQUE ({', '.join(cols_fk)})")
         lineas.append(f"FOREIGN KEY ({', '.join(cols_fk)}) REFERENCES {fk.tabla_padre}{padre_cols}")
+    # Se conservan los UNIQUES
 
+    # Se devuelve la tabla intermedia con el aviso pertinente
     return (f"-- Tabla intermedia creada automáticamente para romper un ciclo de FK:\n"
             f"-- sustituye a {fk.tabla} ({', '.join(fk.columnas)}) -> {fk.tabla_padre}\n"
             f"CREATE TABLE {nombre} (\n  " + ",\n  ".join(lineas) + "\n)")
 
 
 def _quitar_fk(crear: ast.CreateStmt, fk: ClaveForanea) -> None:
-    """Quita de la tabla hija las columnas de la FK (y la FK de tabla, si la hay)."""
+    """Modifico la tabla hija de la FK apartada, que pasa a ser padre de la tabla intermedia."""
     def se_queda(e) -> bool:
         if isinstance(e, ast.ColumnDef):
             return e.colname not in fk.columnas
@@ -219,6 +234,7 @@ def resolver_ciclos(ddl: str) -> ResolucionCiclos:
     Se llama con un DDL ya validado en el paso 1 y sin FK a tablas inexistentes.
     Se vuelve a parsear para poder modificar el árbol sin tocar el del paso 1.
     """
+    # Parseo del DDL.
     sentencias = parse_sql(ddl)
     creates = {nombre_tabla(r.stmt.relation): r.stmt for r in sentencias}
     tablas = list(creates)
@@ -227,6 +243,7 @@ def resolver_ciclos(ddl: str) -> ResolucionCiclos:
 
     aristas = [fk for fk in fks if not fk.autorreferencia] # Si se referencian a la misma
     apartadas: list[ClaveForanea] = []
+    # Se comprueba si hay ciclos, si no hay ciclos se salta el bucle.
     while en_ciclo := _sin_ordenar(tablas, aristas):
         candidatas = []
         for fk in aristas:
@@ -247,6 +264,7 @@ def resolver_ciclos(ddl: str) -> ResolucionCiclos:
         apartadas.append(elegida)
         aristas = [fk for fk in aristas if fk != elegida]
 
+    # Se devuelve el DDL original sin intermedios ni errores.
     if not apartadas:
         return ResolucionCiclos(ddl)
 
@@ -256,15 +274,17 @@ def resolver_ciclos(ddl: str) -> ResolucionCiclos:
     for fk in apartadas:
         hija = creates[fk.tabla]
         pk = _clave_primaria(hija)
+        # El sufijo es el nombre de la columna sin _id
         sufijo = fk.columnas[0].removesuffix("_id") if len(fk.columnas) == 1 else fk.tabla_padre.split(".")[-1]
         nombre = base = f"{fk.tabla}_{sufijo}"
         n = 2
+        # Si el nombre ya existe prueba _2, _3
         while nombre in usados:
             nombre, n = f"{base}_{n}", n + 1
         usados.add(nombre)
         intermedias.append(TablaIntermedia(nombre, fk, _sql_intermedia(nombre, hija, fk, pk)))
 
-    # Se modifican las hijas después de generar las intermedias (necesitan los tipos originales).
+    # Se modifican las hijas después de generar las intermedias.
     modificadas = set()
     for fk in apartadas:
         _quitar_fk(creates[fk.tabla], fk)
@@ -274,6 +294,8 @@ def resolver_ciclos(ddl: str) -> ResolucionCiclos:
     partes = []
     for raw in sentencias:
         tabla = nombre_tabla(raw.stmt.relation)
+        # Las tablas modificadas se reescriben desde el AST y las que no se mantienen tal cual.
         partes.append(IndentedStream()(raw) if tabla in modificadas else _texto(ddl, raw))
+    # Las tablas intermedias se añaden al final.
     partes += [i.ddl for i in intermedias]
     return ResolucionCiclos(";\n\n".join(partes) + ";\n", intermedias)

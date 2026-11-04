@@ -225,6 +225,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .lista-tablas { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .25rem; }
 .ddl-final { margin-top: .75rem; }
 .ddl-final summary { cursor: pointer; font-size: .85rem; margin-bottom: .5rem; }
+.arbol { list-style: none; padding: 0; margin: 0 0 .75rem; font-size: .85rem; }
+.arbol-titulo { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: .2rem; }
+.arbol-tabla { font-family: var(--mono); white-space: pre; }
 
 .table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .table th, .table td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid var(--line); }

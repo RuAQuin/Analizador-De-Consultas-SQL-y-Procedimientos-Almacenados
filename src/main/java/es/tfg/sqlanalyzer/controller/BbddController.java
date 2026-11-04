@@ -75,7 +75,10 @@ public class BbddController {
         ra.addFlashAttribute("clavesForaneas", validacion.clavesForaneas());
         ra.addFlashAttribute("tablasIntermedias", validacion.tablasIntermedias());
         ra.addFlashAttribute("ddlFinal", validacion.ddlFinal());
-        String aviso = "El DDL es correcto: pglast lo ha parseado y las tablas se han ordenado con Kahn.";
+        // Paso 2.2: árboles de agrupación.
+        ra.addFlashAttribute("arboles", validacion.arboles());
+        String aviso = "El DDL es correcto: pglast lo ha parseado, las tablas se han ordenado con Kahn"
+                + " y se han formado los árboles de agrupación.";
         if (validacion.tablasIntermedias() != null && !validacion.tablasIntermedias().isEmpty()) {
             aviso += " Las FK formaban ciclos y se han roto creando "
                     + validacion.tablasIntermedias().size() + " tabla(s) intermedia(s).";

@@ -2,8 +2,10 @@ package es.tfg.sqlanalyzer;
 
 import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
 import es.tfg.sqlanalyzer.api.ApiPythonClient;
+import es.tfg.sqlanalyzer.api.Arbol;
 import es.tfg.sqlanalyzer.api.ClaveForanea;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
+import es.tfg.sqlanalyzer.api.NodoArbol;
 import es.tfg.sqlanalyzer.api.TablaIntermedia;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
@@ -47,7 +49,7 @@ class BbddTests {
         var orden = List.of(new TablaOrdenada("clientes", 0), new TablaOrdenada("compras", 1));
         var fks = List.of(new ClaveForanea("compras", List.of("cliente_id"), "clientes", List.of("id")));
         when(api.validarDdl(DDL)).thenReturn(
-                new ValidacionDdl(true, List.of("compras", "clientes"), List.of(), fks, orden, List.of(), DDL));
+                new ValidacionDdl(true, List.of("compras", "clientes"), List.of(), fks, orden, List.of(), DDL, List.of()));
 
         mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
            .andExpect(redirectedUrl("/bbdd"))
@@ -68,13 +70,40 @@ class BbddTests {
     }
 
     @Test
+    // Paso 2.2: la pantalla dibuja los árboles de agrupación con la FK por la que cuelga cada tabla.
+    void pantallaMuestraArbolesDeAgrupacion() throws Exception {
+        var fkCompras = new ClaveForanea("compras", List.of("cliente_id"), "clientes", List.of("id"));
+        var fkLineas = new ClaveForanea("lineas_compra", List.of("compra_id"), "compras", List.of("id"));
+        var arboles = List.of(
+                new Arbol("productos", List.of(new NodoArbol("productos", null, 0, null))),
+                new Arbol("clientes", List.of(
+                        new NodoArbol("clientes", null, 0, null),
+                        new NodoArbol("compras", "clientes", 1, fkCompras),
+                        new NodoArbol("lineas_compra", "compras", 2, fkLineas))));
+        when(api.validarDdl(DDL)).thenReturn(new ValidacionDdl(true, List.of(), List.of(), List.of(fkCompras, fkLineas),
+                List.of(new TablaOrdenada("productos", 0)), List.of(), DDL, arboles));
+
+        var flash = mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("arboles", arboles))
+           .andReturn().getFlashMap();
+
+        mvc.perform(get("/bbdd").flashAttrs(flash))
+           .andExpect(content().string(containsString("Árboles de agrupación")))
+           .andExpect(content().string(containsString("Árbol 2")))
+           .andExpect(content().string(containsString("└─ compras")))
+           .andExpect(content().string(containsString("   └─ lineas_compra")))
+           .andExpect(content().string(containsString("por compra_id")));
+    }
+
+    @Test
     // Si la API ha roto un ciclo con una tabla intermedia, la pantalla lo indica y muestra el DDL final.
     void cicloResueltoMuestraTablaIntermediaYDdlFinal() throws Exception {
         var fkApartada = new ClaveForanea("departamentos", List.of("responsable_id"), "empleados", List.of("id"));
         var intermedias = List.of(new TablaIntermedia("departamentos_responsable", fkApartada));
         String ddlFinal = "CREATE TABLE departamentos_responsable (departamentos_id integer PRIMARY KEY);";
         when(api.validarDdl(DDL)).thenReturn(new ValidacionDdl(true, List.of("clientes"), List.of(), List.of(),
-                List.of(new TablaOrdenada("clientes", 0)), intermedias, ddlFinal));
+                List.of(new TablaOrdenada("clientes", 0)), intermedias, ddlFinal, List.of()));
 
         var flash = mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
            .andExpect(redirectedUrl("/bbdd"))
@@ -94,7 +123,7 @@ class BbddTests {
         String ddl = "CREATE TABLE compras (cliente_id int REFERENCES clientes(id));";
         when(api.validarDdl(ddl)).thenReturn(new ValidacionDdl(false, List.of("compras"),
                 List.of(new ErrorDdl("La FK de «compras» (cliente_id) referencia la tabla «clientes», que no está definida en el DDL", 1, 34)),
-                List.of(), List.of(), List.of(), null));
+                List.of(), List.of(), List.of(), null, List.of()));
 
         mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", ddl))
            .andExpect(status().isOk())
@@ -107,7 +136,7 @@ class BbddTests {
     void ddlInvalidoVuelveAlFormularioConElError() throws Exception {
         String ddl = "CREATE TABLA clientes (id int);";
         when(api.validarDdl(ddl)).thenReturn(new ValidacionDdl(false, List.of(),
-                List.of(new ErrorDdl("Error de sintaxis: syntax error at or near \"TABLA\"", 1, 8)), List.of(), List.of(), List.of(), null));
+                List.of(new ErrorDdl("Error de sintaxis: syntax error at or near \"TABLA\"", 1, 8)), List.of(), List.of(), List.of(), null, List.of()));
 
         mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", ddl))
            .andExpect(status().isOk())

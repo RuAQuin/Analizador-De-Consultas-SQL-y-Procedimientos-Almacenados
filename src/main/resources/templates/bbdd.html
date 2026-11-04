@@ -42,7 +42,7 @@
                     <li th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>DDL parseado con pglast</li>
                     <li><span class="step-dot"></span>Árbol de agrupación</li>
                     <li class="step-sub" th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>FK leídas y orden de Kahn</li>
-                    <li class="step-sub"><span class="step-dot"></span>FK de agrupación y árboles</li>
+                    <li class="step-sub" th:classappend="${arboles != null} ? 'step-done'"><span class="step-dot"></span>FK de agrupación y árboles</li>
                     <li class="step-sub"><span class="step-dot"></span>Kahn entre árboles</li>
                     <li><span class="step-dot"></span>Prototipo de datos</li>
                     <li><span class="step-dot"></span>CREATE DATABASE / CREATE TABLE</li>
@@ -63,6 +63,18 @@
                             </tr>
                         </tbody>
                     </table>
+
+                    <div th:if="${arboles != null}">
+                        <h3 class="panel-subtitle">Árboles de agrupación</h3>
+                        <ul class="arbol" th:each="a, it : ${arboles}">
+                            <li class="arbol-titulo" th:text="'Árbol ' + ${it.count}">Árbol 1</li>
+                            <li th:each="n : ${a.nodos}">
+                                <span class="arbol-tabla" th:text="${n.sangria()}">clientes</span>
+                                <span class="muted" th:if="${n.fkAgrupacion != null}"
+                                      th:text="'por ' + ${#strings.listJoin(n.fkAgrupacion.columnas, ', ')}">por cliente_id</span>
+                            </li>
+                        </ul>
+                    </div>
 
                     <h3 class="panel-subtitle">Claves foráneas</h3>
                     <ul class="lista-tablas" th:if="${!#lists.isEmpty(clavesForaneas)}">

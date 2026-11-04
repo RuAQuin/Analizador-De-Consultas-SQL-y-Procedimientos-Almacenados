@@ -25,11 +25,11 @@ class ClaveForanea:
     tabla: str # Tabla hija
     columnas: tuple[str, ...] # Columnas que forman la FK
     tabla_padre: str
-    # Vacío si el DDL no las indica: entonces referencia la PK de la tabla padre.
-    columnas_padre: tuple[str, ...]
+    columnas_padre: tuple[str, ...] # Vacío si el DDL no las indica: entonces referencia la PK de la tabla padre.
     # Desplazamiento de la FK en el DDL, para situar los errores.
     posicion: int = field(default=0, compare=False) # Se compara a False porque no influye para ser iguales.
 
+    # ¿La tabla se hace referencia a si misma?
     @property
     def autorreferencia(self) -> bool:
         return self.tabla == self.tabla_padre
@@ -38,6 +38,7 @@ class ClaveForanea:
 @dataclass(frozen=True)
 class TablaOrdenada:
     tabla: str
+    # Camino más largo
     nivel: int
 
 
@@ -88,6 +89,7 @@ def _kahn(tablas: list[str], fks: list[ClaveForanea]) -> tuple[list[TablaOrdenad
     A igualdad de nivel se respeta el orden en que aparecen en el DDL, para que
     el resultado sea siempre el mismo.
     """
+    # Creación de los diccionarios padres e hijas.
     posicion = {t: i for i, t in enumerate(tablas)}
     padres: dict[str, set[str]] = {t: set() for t in tablas}
     hijas: dict[str, set[str]] = {t: set() for t in tablas}
@@ -96,19 +98,22 @@ def _kahn(tablas: list[str], fks: list[ClaveForanea]) -> tuple[list[TablaOrdenad
             padres[fk.tabla].add(fk.tabla_padre)
             hijas[fk.tabla_padre].add(fk.tabla)
 
+    # Guarda cuántos padres le faltan a cada tabla por colocar.
     pendientes = {t: len(p) for t, p in padres.items()}
     oleada = [t for t in tablas if pendientes[t] == 0]
     orden: list[TablaOrdenada] = []
-    nivel = 0
+    nivel = 0 # Empezaremos las oleadas con las tablas sin padres (raíces).
     while oleada:
         orden.extend(TablaOrdenada(t, nivel) for t in oleada)
         siguiente = []
         for t in oleada:
             for h in hijas[t]:
                 pendientes[h] -= 1
+                # En cada oleada desaparecen las tablas sin padres pendientes
                 if pendientes[h] == 0:
                     siguiente.append(h)
         oleada = sorted(siguiente, key=posicion.__getitem__)
+        # Por cada ronda que este la tabla en la oleada se le sumará un nivel
         nivel += 1
 
     ordenadas = {o.tabla for o in orden}
@@ -136,6 +141,7 @@ def analizar_dependencias(sentencias: tuple[ast.RawStmt, ...], ddl: str) -> Depe
     for raw in sentencias:
         crear = raw.stmt
         tabla = nombre_tabla(crear.relation)
+        # Si una tabla está definida dos veces --> Error
         if tabla in inicio:
             errores.append(ErrorDdl(f"La tabla «{tabla}» está definida más de una vez",
                                     *linea_columna(ddl, raw.stmt_location or 0)))
@@ -144,15 +150,19 @@ def analizar_dependencias(sentencias: tuple[ast.RawStmt, ...], ddl: str) -> Depe
         inicio[tabla] = raw.stmt_location or 0
         fks.extend(leer_fks(crear))
 
+    # Comprueba que cada FK apunte a una tabla definida en el DDL.
     for fk in fks:
         if fk.tabla_padre not in inicio:
             errores.append(ErrorDdl(
                 f"La FK de «{fk.tabla}» ({', '.join(fk.columnas)}) referencia la tabla «{fk.tabla_padre}», "
                 "que no está definida en el DDL", *linea_columna(ddl, fk.posicion)))
+    # Si ya se encuentran errores no merece la pena seguir.
     if errores:
         return Dependencias(claves_foraneas=fks, errores=errores)
 
+    # Se ejecuta kahn
     orden, en_ciclo = _kahn(tablas, fks)
+    #Si existe algún ciclo se marca.
     if en_ciclo:
         en_ciclo = _solo_ciclos(en_ciclo, fks)
         errores.append(ErrorDdl(
