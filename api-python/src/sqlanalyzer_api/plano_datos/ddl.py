@@ -12,7 +12,7 @@ from pglast import ast, parse_sql
 from pglast.parser import ParseError
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True) # Clases inmutables, pero se pueden cambiar los contenidos de las listas, por ejemplo.
 class ErrorDdl:
     mensaje: str
     # Posición del error en el texto (empiezan en 1). None si no se conoce.

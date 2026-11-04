@@ -48,7 +48,7 @@ public class BbddController {
     public String validarDdl(@Valid @ModelAttribute("form") CreacionBbddForm form,
                              BindingResult result,
                              Model model,
-                             RedirectAttributes ra) {
+                             RedirectAttributes ra /* Se utiliza para pasar atributos entre redirecciones */) {
         if (result.hasErrors()) {
             return "bbdd";
         }
@@ -77,8 +77,10 @@ public class BbddController {
         ra.addFlashAttribute("ddlFinal", validacion.ddlFinal());
         // Paso 2.2: árboles de agrupación.
         ra.addFlashAttribute("arboles", validacion.arboles());
-        String aviso = "El DDL es correcto: pglast lo ha parseado, las tablas se han ordenado con Kahn"
-                + " y se han formado los árboles de agrupación.";
+        // Paso 2.3: orden de carga de los árboles (Kahn entre árboles).
+        ra.addFlashAttribute("ordenCarga", validacion.ordenCarga());
+        String aviso = "El DDL es correcto: pglast lo ha parseado, las tablas se han ordenado con Kahn,"
+                + " se han formado los árboles de agrupación y se ha decidido su orden de carga.";
         if (validacion.tablasIntermedias() != null && !validacion.tablasIntermedias().isEmpty()) {
             aviso += " Las FK formaban ciclos y se han roto creando "
                     + validacion.tablasIntermedias().size() + " tabla(s) intermedia(s).";

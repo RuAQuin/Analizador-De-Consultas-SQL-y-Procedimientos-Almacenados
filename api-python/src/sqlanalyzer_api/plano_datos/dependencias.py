@@ -83,41 +83,49 @@ def leer_fks(crear: ast.CreateStmt) -> list[ClaveForanea]:
     return fks
 
 
-def _kahn(tablas: list[str], fks: list[ClaveForanea]) -> tuple[list[TablaOrdenada], list[str]]:
-    """Orden topológico por oleadas. Devuelve el orden y las tablas que quedan en un ciclo.
+def kahn(nodos: list[str], aristas: set[tuple[str, str]]) -> tuple[list[tuple[str, int]], list[str]]:
+    """Orden topológico de Kahn por oleadas sobre cualquier grafo.
 
-    A igualdad de nivel se respeta el orden en que aparecen en el DDL, para que
-    el resultado sea siempre el mismo.
+    ``aristas`` son pares (padre, hija). Devuelve los nodos ordenados con su nivel
+    y los que quedan sin ordenar por formar (o colgar de) un ciclo. A igualdad de
+    nivel se respeta el orden de ``nodos``, para que el resultado sea siempre el mismo.
+    Se usa para ordenar las tablas (paso 2.1) y los árboles (paso 2.3).
     """
     # Creación de los diccionarios padres e hijas.
-    posicion = {t: i for i, t in enumerate(tablas)}
-    padres: dict[str, set[str]] = {t: set() for t in tablas}
-    hijas: dict[str, set[str]] = {t: set() for t in tablas}
-    for fk in fks:
-        if not fk.autorreferencia:
-            padres[fk.tabla].add(fk.tabla_padre)
-            hijas[fk.tabla_padre].add(fk.tabla)
+    posicion = {n: i for i, n in enumerate(nodos)}
+    padres: dict[str, set[str]] = {n: set() for n in nodos}
+    hijas: dict[str, set[str]] = {n: set() for n in nodos}
+    for padre, hija in aristas:
+        padres[hija].add(padre)
+        hijas[padre].add(hija)
 
-    # Guarda cuántos padres le faltan a cada tabla por colocar.
-    pendientes = {t: len(p) for t, p in padres.items()}
-    oleada = [t for t in tablas if pendientes[t] == 0]
-    orden: list[TablaOrdenada] = []
-    nivel = 0 # Empezaremos las oleadas con las tablas sin padres (raíces).
+    # Guarda cuántos padres le faltan a cada nodo por colocar.
+    pendientes = {n: len(p) for n, p in padres.items()}
+    oleada = [n for n in nodos if pendientes[n] == 0]
+    orden: list[tuple[str, int]] = []
+    nivel = 0 # Empezaremos las oleadas con los nodos sin padres (raíces).
     while oleada:
-        orden.extend(TablaOrdenada(t, nivel) for t in oleada)
+        orden.extend((n, nivel) for n in oleada)
         siguiente = []
-        for t in oleada:
-            for h in hijas[t]:
+        for n in oleada:
+            for h in hijas[n]:
                 pendientes[h] -= 1
-                # En cada oleada desaparecen las tablas sin padres pendientes
+                # En cada oleada desaparecen los nodos sin padres pendientes
                 if pendientes[h] == 0:
                     siguiente.append(h)
         oleada = sorted(siguiente, key=posicion.__getitem__)
-        # Por cada ronda que este la tabla en la oleada se le sumará un nivel
+        # Por cada ronda que esté el nodo en la oleada se le sumará un nivel
         nivel += 1
 
-    ordenadas = {o.tabla for o in orden}
-    return orden, [t for t in tablas if t not in ordenadas]
+    ordenados = {n for n, _ in orden}
+    return orden, [n for n in nodos if n not in ordenados]
+
+
+def _kahn(tablas: list[str], fks: list[ClaveForanea]) -> tuple[list[TablaOrdenada], list[str]]:
+    """Kahn sobre las tablas: cada FK es una arista padre -> hija (sin autorreferencias)."""
+    aristas = {(fk.tabla_padre, fk.tabla) for fk in fks if not fk.autorreferencia}
+    orden, restantes = kahn(tablas, aristas)
+    return [TablaOrdenada(t, nivel) for t, nivel in orden], restantes
 
 
 def _solo_ciclos(restantes: list[str], fks: list[ClaveForanea]) -> list[str]:

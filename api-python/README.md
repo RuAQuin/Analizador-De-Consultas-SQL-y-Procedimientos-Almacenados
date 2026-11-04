@@ -8,7 +8,7 @@ API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
 | 1. El usuario escribe el DDL y se parsea con pglast | Hecho |
 | 2.1. Se leen las FK del DDL y se ordenan las tablas con Kahn | Hecho |
 | 2.2. FK de agrupación de cada tabla y formación de los árboles | Hecho |
-| 2.3. Kahn entre árboles | Pendiente |
+| 2.3. Kahn entre árboles | Hecho |
 | 3. Prototipo de datos | Pendiente |
 | 4. Revisión y confirmación | Pendiente |
 | 5. CREATE DATABASE / CREATE TABLE | Pendiente |
@@ -39,7 +39,7 @@ uvicorn sqlanalyzer_api.app:app --reload
 | Método | Ruta | Qué hace |
 |--------|------|----------|
 | GET | `/salud` | Comprueba que la API está arrancada |
-| POST | `/bbdd/ddl` | Paso 1: parsea el DDL con pglast. Paso 2.1: lee las FK y ordena las tablas con Kahn. Paso 2.2: forma los árboles de agrupación |
+| POST | `/bbdd/ddl` | Paso 1: parsea el DDL con pglast. Paso 2.1: lee las FK y ordena las tablas con Kahn. Paso 2.2: forma los árboles de agrupación. Paso 2.3: ordena los árboles con Kahn |
 
 `POST /bbdd/ddl` recibe `{"ddl": "CREATE TABLE ..."}` y siempre responde 200:
 
@@ -50,10 +50,11 @@ uvicorn sqlanalyzer_api.app:app --reload
  "tablas_intermedias": [], "ddl_final": "CREATE TABLE compras (...); CREATE TABLE clientes (...);",
  "arboles": [{"raiz": "clientes", "nodos": [
    {"tabla": "clientes", "padre": null, "nivel": 0, "fk_agrupacion": null},
-   {"tabla": "compras", "padre": "clientes", "nivel": 1, "fk_agrupacion": {"tabla": "compras", "columnas": ["cliente_id"], ...}}]}]}
+   {"tabla": "compras", "padre": "clientes", "nivel": 1, "fk_agrupacion": {"tabla": "compras", "columnas": ["cliente_id"], ...}}]}],
+ "orden_carga": [{"arboles": ["clientes"], "nivel": 0, "depende_de": [], "referencias": []}]}
 
 {"valido": false, "tablas": [], "errores": [{"mensaje": "Error de sintaxis: syntax error at or near \"NUL\"", "linea": 3, "columna": 19}],
- "claves_foraneas": [], "orden": [], "tablas_intermedias": [], "ddl_final": null, "arboles": []}
+ "claves_foraneas": [], "orden": [], "tablas_intermedias": [], "ddl_final": null, "arboles": [], "orden_carga": []}
 ```
 
 - **Paso 1** (`plano_datos/ddl.py`): solo se admiten sentencias `CREATE TABLE`; cualquier
@@ -81,6 +82,15 @@ uvicorn sqlanalyzer_api.app:app --reload
   `nodos` van en preorden (cada tabla antes que las que cuelgan de ella). La profundidad
   de una tabla en su árbol coincide con su nivel de Kahn. Las demás FK se resolverán al
   insertar los datos y servirán para ordenar los árboles entre sí (paso 2.3).
+- **Paso 2.3** (`plano_datos/orden_arboles.py`): las FK que no son de agrupación y van
+  de una tabla de un árbol a una tabla de otro árbol obligan a cargar antes este último.
+  Con esas aristas se aplica Kahn entre árboles (la misma función `kahn` del paso 2.1;
+  a igual nivel, el orden de los árboles). `orden_carga` es la lista de grupos de carga
+  con su `nivel`, los árboles de los que dependen (`depende_de`) y las FK que lo causan
+  (`referencias`). Aunque las tablas no tengan ciclos, los árboles sí pueden formarlos
+  (una tabla de A referencia a B y otra de B a A); esos árboles se juntan en un mismo
+  grupo y se cargarán juntos respetando el orden de Kahn de las tablas. Lo normal es que
+  cada grupo tenga un solo árbol.
 
 ## Tests
 

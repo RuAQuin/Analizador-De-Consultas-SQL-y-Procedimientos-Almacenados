@@ -228,6 +228,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .arbol { list-style: none; padding: 0; margin: 0 0 .75rem; font-size: .85rem; }
 .arbol-titulo { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: .2rem; }
 .arbol-tabla { font-family: var(--mono); white-space: pre; }
+.referencia { display: block; font-size: .8rem; }
 
 .table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .table th, .table td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid var(--line); }

@@ -43,7 +43,7 @@
                     <li><span class="step-dot"></span>Árbol de agrupación</li>
                     <li class="step-sub" th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>FK leídas y orden de Kahn</li>
                     <li class="step-sub" th:classappend="${arboles != null} ? 'step-done'"><span class="step-dot"></span>FK de agrupación y árboles</li>
-                    <li class="step-sub"><span class="step-dot"></span>Kahn entre árboles</li>
+                    <li class="step-sub" th:classappend="${ordenCarga != null} ? 'step-done'"><span class="step-dot"></span>Kahn entre árboles</li>
                     <li><span class="step-dot"></span>Prototipo de datos</li>
                     <li><span class="step-dot"></span>CREATE DATABASE / CREATE TABLE</li>
                     <li><span class="step-dot"></span>Inserción de datos</li>
@@ -74,6 +74,27 @@
                                       th:text="'por ' + ${#strings.listJoin(n.fkAgrupacion.columnas, ', ')}">por cliente_id</span>
                             </li>
                         </ul>
+                    </div>
+
+                    <div th:if="${ordenCarga != null}">
+                        <h3 class="panel-subtitle">Orden de carga de los árboles (Kahn)</h3>
+                        <table class="table">
+                            <thead><tr><th>#</th><th>Árbol (raíz)</th><th>Nivel</th><th>Depende de</th></tr></thead>
+                            <tbody>
+                                <tr th:each="g, it : ${ordenCarga}">
+                                    <td th:text="${it.count}">1</td>
+                                    <td>
+                                        <span class="code" th:text="${#strings.listJoin(g.arboles, ' + ')}">clientes</span>
+                                        <small class="muted" th:if="${g.arboles.size() > 1}"><br>en ciclo: se cargan juntos</small>
+                                    </td>
+                                    <td th:text="${g.nivel}">0</td>
+                                    <td>
+                                        <span th:if="${#lists.isEmpty(g.dependeDe)}" class="muted">—</span>
+                                        <span th:each="fk : ${g.referencias}" class="code referencia" th:text="${fk.descripcion()}">fk</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
 
                     <h3 class="panel-subtitle">Claves foráneas</h3>
