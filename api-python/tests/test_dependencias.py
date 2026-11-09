@@ -137,3 +137,14 @@ def test_endpoint_fk_rota_no_es_valido():
     assert cuerpo["valido"] is False
     assert cuerpo["orden"] == []
     assert "«b»" in cuerpo["errores"][0]["mensaje"]
+
+
+def test_ciclo_recomienda_eliminar_una_fk():
+    dep = analizar("""
+        CREATE TABLE departamentos (id int PRIMARY KEY, responsable_id int REFERENCES empleados);
+        CREATE TABLE empleados (id int PRIMARY KEY, departamento_id int REFERENCES departamentos);
+    """)
+    [error] = dep.errores
+    assert "Para corregirlo, elimina una de estas FK" in error.mensaje
+    assert "«departamentos» (responsable_id) → «empleados»" in error.mensaje
+    assert "«empleados» (departamento_id) → «departamentos»" in error.mensaje

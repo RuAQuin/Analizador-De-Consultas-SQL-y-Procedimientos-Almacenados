@@ -48,8 +48,6 @@ class Dependencias:
     # Orden topológico de Kahn: los padres siempre antes que sus hijas.
     orden: list[TablaOrdenada] = field(default_factory=list)
     errores: list[ErrorDdl] = field(default_factory=list)
-    # Tablas que forman un ciclo de FK (vacío si no hay). En caso de ciclo, se debe crear una tabla intermedia.
-    ciclo: list[str] = field(default_factory=list)
 
     @property
     def valido(self) -> bool:
@@ -128,14 +126,19 @@ def _kahn(tablas: list[str], fks: list[ClaveForanea]) -> tuple[list[TablaOrdenad
     return [TablaOrdenada(t, nivel) for t, nivel in orden], restantes
 
 
-def _solo_ciclos(restantes: list[str], fks: list[ClaveForanea]) -> list[str]:
-    """De las tablas que Kahn no pudo ordenar, quita las que solo cuelgan de un ciclo sin formar parte de él."""
+def solo_ciclos(restantes: list[str], aristas: set[tuple[str, str]]) -> list[str]:
+    """De los nodos que Kahn no pudo ordenar, quita los que solo cuelgan de un ciclo sin formar parte de él.
+
+    ``aristas`` son pares (padre, hija), como en ``kahn``. Se usa para las tablas (paso 2.1)
+    y para los árboles (paso 2.3).
+    """
     quedan = set(restantes)
-    hijas = {t: {fk.tabla for fk in fks if fk.tabla_padre == t and not fk.autorreferencia} for t in quedan}
+    hijas = {n: {h for p, h in aristas if p == n} for n in quedan}
+    # Se quitan repetidamente los nodos sin hijas pendientes: no pueden formar parte de un ciclo.
     while True:
-        sin_hijas = {t for t in quedan if not hijas[t] & quedan}
+        sin_hijas = {n for n in quedan if not hijas[n] & quedan}
         if not sin_hijas:
-            return [t for t in restantes if t in quedan]
+            return [n for n in restantes if n in quedan]
         quedan -= sin_hijas
 
 
@@ -170,10 +173,20 @@ def analizar_dependencias(sentencias: tuple[ast.RawStmt, ...], ddl: str) -> Depe
 
     # Se ejecuta kahn
     orden, en_ciclo = _kahn(tablas, fks)
-    #Si existe algún ciclo se marca.
+    # Si existe algún ciclo, es un error: no se intenta resolver, se recomienda eliminar una FK.
     if en_ciclo:
-        en_ciclo = _solo_ciclos(en_ciclo, fks)
+        aristas = {(fk.tabla_padre, fk.tabla) for fk in fks if not fk.autorreferencia}
+        en_ciclo = solo_ciclos(en_ciclo, aristas)
+        del_ciclo = [fk for fk in fks
+                     if not fk.autorreferencia and fk.tabla in en_ciclo and fk.tabla_padre in en_ciclo]
         errores.append(ErrorDdl(
             "Hay un ciclo de FK entre las tablas " + ", ".join(f"«{t}»" for t in en_ciclo)
-            + ": ninguna puede crearse antes que las demás", *linea_columna(ddl, inicio[en_ciclo[0]])))
-    return Dependencias(claves_foraneas=fks, orden=orden, errores=errores, ciclo=en_ciclo)
+            + ": ninguna puede crearse antes que las demás. Para corregirlo, elimina una de estas FK: "
+            + "; ".join(describir_fk(fk) for fk in del_ciclo),
+            *linea_columna(ddl, inicio[en_ciclo[0]])))
+    return Dependencias(claves_foraneas=fks, orden=orden, errores=errores)
+
+
+def describir_fk(fk: ClaveForanea) -> str:
+    """Texto de una FK para los mensajes, p. ej. «compras» (cliente_id) → «clientes»."""
+    return f"«{fk.tabla}» ({', '.join(fk.columnas)}) → «{fk.tabla_padre}»"

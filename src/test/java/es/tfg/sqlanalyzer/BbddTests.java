@@ -3,11 +3,10 @@ package es.tfg.sqlanalyzer;
 import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
 import es.tfg.sqlanalyzer.api.ApiPythonClient;
 import es.tfg.sqlanalyzer.api.Arbol;
+import es.tfg.sqlanalyzer.api.ArbolOrdenado;
 import es.tfg.sqlanalyzer.api.ClaveForanea;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
-import es.tfg.sqlanalyzer.api.GrupoCarga;
 import es.tfg.sqlanalyzer.api.NodoArbol;
-import es.tfg.sqlanalyzer.api.TablaIntermedia;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
 import org.junit.jupiter.api.Test;
@@ -50,7 +49,7 @@ class BbddTests {
         var orden = List.of(new TablaOrdenada("clientes", 0), new TablaOrdenada("compras", 1));
         var fks = List.of(new ClaveForanea("compras", List.of("cliente_id"), "clientes", List.of("id")));
         when(api.validarDdl(DDL)).thenReturn(
-                new ValidacionDdl(true, List.of("compras", "clientes"), List.of(), fks, orden, List.of(), DDL, List.of(), List.of()));
+                new ValidacionDdl(true, List.of("compras", "clientes"), List.of(), fks, orden, List.of(), List.of()));
 
         mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
            .andExpect(redirectedUrl("/bbdd"))
@@ -82,7 +81,7 @@ class BbddTests {
                         new NodoArbol("compras", "clientes", 1, fkCompras),
                         new NodoArbol("lineas_compra", "compras", 2, fkLineas))));
         when(api.validarDdl(DDL)).thenReturn(new ValidacionDdl(true, List.of(), List.of(), List.of(fkCompras, fkLineas),
-                List.of(new TablaOrdenada("productos", 0)), List.of(), DDL, arboles, List.of()));
+                List.of(new TablaOrdenada("productos", 0)), arboles, List.of()));
 
         var flash = mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
            .andExpect(redirectedUrl("/bbdd"))
@@ -102,11 +101,10 @@ class BbddTests {
     void pantallaMuestraOrdenDeCargaDeLosArboles() throws Exception {
         var fkProducto = new ClaveForanea("lineas_compra", List.of("producto_id"), "productos", List.of("id"));
         var ordenCarga = List.of(
-                new GrupoCarga(List.of("productos"), 0, List.of(), List.of()),
-                new GrupoCarga(List.of("clientes"), 1, List.of("productos"), List.of(fkProducto)),
-                new GrupoCarga(List.of("a1", "b1"), 0, List.of(), List.of()));
+                new ArbolOrdenado("productos", 0, List.of(), List.of()),
+                new ArbolOrdenado("clientes", 1, List.of("productos"), List.of(fkProducto)));
         when(api.validarDdl(DDL)).thenReturn(new ValidacionDdl(true, List.of(), List.of(), List.of(fkProducto),
-                List.of(new TablaOrdenada("productos", 0)), List.of(), DDL, List.of(), ordenCarga));
+                List.of(new TablaOrdenada("productos", 0)), List.of(), ordenCarga));
 
         var flash = mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
            .andExpect(redirectedUrl("/bbdd"))
@@ -115,30 +113,23 @@ class BbddTests {
 
         mvc.perform(get("/bbdd").flashAttrs(flash))
            .andExpect(content().string(containsString("Orden de carga de los árboles (Kahn)")))
-           .andExpect(content().string(containsString("lineas_compra (producto_id) → productos (id)")))
-           .andExpect(content().string(containsString("a1 + b1")))
-           .andExpect(content().string(containsString("en ciclo: se cargan juntos")));
+           .andExpect(content().string(containsString("lineas_compra (producto_id) → productos (id)")));
     }
 
     @Test
-    // Si la API ha roto un ciclo con una tabla intermedia, la pantalla lo indica y muestra el DDL final.
-    void cicloResueltoMuestraTablaIntermediaYDdlFinal() throws Exception {
-        var fkApartada = new ClaveForanea("departamentos", List.of("responsable_id"), "empleados", List.of("id"));
-        var intermedias = List.of(new TablaIntermedia("departamentos_responsable", fkApartada));
-        String ddlFinal = "CREATE TABLE departamentos_responsable (departamentos_id integer PRIMARY KEY);";
-        when(api.validarDdl(DDL)).thenReturn(new ValidacionDdl(true, List.of("clientes"), List.of(), List.of(),
-                List.of(new TablaOrdenada("clientes", 0)), intermedias, ddlFinal, List.of(), List.of()));
+    // Los ciclos no se resuelven: llegan como error y se vuelve al formulario con el DDL escrito.
+    void cicloVuelveAlFormularioConElError() throws Exception {
+        String ddl = "CREATE TABLE a (id int PRIMARY KEY, b_id int REFERENCES b);\nCREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a);";
+        when(api.validarDdl(ddl)).thenReturn(new ValidacionDdl(false, List.of("a", "b"),
+                List.of(new ErrorDdl("Hay un ciclo de FK entre las tablas «a», «b»: ninguna puede crearse antes que las demás", 1, 1)),
+                List.of(), List.of(), List.of(), List.of()));
 
-        var flash = mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
-           .andExpect(redirectedUrl("/bbdd"))
-           .andExpect(flash().attribute("tablasIntermedias", intermedias))
-           .andExpect(flash().attribute("aviso", containsString("1 tabla(s) intermedia(s)")))
-           .andReturn().getFlashMap();
-
-        mvc.perform(get("/bbdd").flashAttrs(flash))
-           .andExpect(content().string(containsString("Ciclos resueltos con tablas intermedias")))
-           .andExpect(content().string(containsString("departamentos (responsable_id) → empleados (id)")))
-           .andExpect(content().string(containsString("CREATE TABLE departamentos_responsable")));
+        mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", ddl))
+           .andExpect(status().isOk())
+           .andExpect(view().name("bbdd"))
+           .andExpect(model().attributeHasFieldErrorCode("form", "definicionTablas", "ddl.invalido"))
+           .andExpect(content().string(containsString("Línea 1, columna 1: Hay un ciclo de FK entre las tablas «a», «b»")))
+           .andExpect(content().string(containsString("REFERENCES b")));
     }
 
     @Test
@@ -147,7 +138,7 @@ class BbddTests {
         String ddl = "CREATE TABLE compras (cliente_id int REFERENCES clientes(id));";
         when(api.validarDdl(ddl)).thenReturn(new ValidacionDdl(false, List.of("compras"),
                 List.of(new ErrorDdl("La FK de «compras» (cliente_id) referencia la tabla «clientes», que no está definida en el DDL", 1, 34)),
-                List.of(), List.of(), List.of(), null, List.of(), List.of()));
+                List.of(), List.of(), List.of(), List.of()));
 
         mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", ddl))
            .andExpect(status().isOk())
@@ -160,7 +151,7 @@ class BbddTests {
     void ddlInvalidoVuelveAlFormularioConElError() throws Exception {
         String ddl = "CREATE TABLA clientes (id int);";
         when(api.validarDdl(ddl)).thenReturn(new ValidacionDdl(false, List.of(),
-                List.of(new ErrorDdl("Error de sintaxis: syntax error at or near \"TABLA\"", 1, 8)), List.of(), List.of(), List.of(), null, List.of(), List.of()));
+                List.of(new ErrorDdl("Error de sintaxis: syntax error at or near \"TABLA\"", 1, 8)), List.of(), List.of(), List.of(), List.of()));
 
         mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", ddl))
            .andExpect(status().isOk())

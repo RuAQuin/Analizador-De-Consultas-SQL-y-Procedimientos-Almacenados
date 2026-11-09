@@ -81,16 +81,13 @@
                         <table class="table">
                             <thead><tr><th>#</th><th>Árbol (raíz)</th><th>Nivel</th><th>Depende de</th></tr></thead>
                             <tbody>
-                                <tr th:each="g, it : ${ordenCarga}">
+                                <tr th:each="a, it : ${ordenCarga}">
                                     <td th:text="${it.count}">1</td>
+                                    <td class="code" th:text="${a.raiz}">clientes</td>
+                                    <td th:text="${a.nivel}">0</td>
                                     <td>
-                                        <span class="code" th:text="${#strings.listJoin(g.arboles, ' + ')}">clientes</span>
-                                        <small class="muted" th:if="${g.arboles.size() > 1}"><br>en ciclo: se cargan juntos</small>
-                                    </td>
-                                    <td th:text="${g.nivel}">0</td>
-                                    <td>
-                                        <span th:if="${#lists.isEmpty(g.dependeDe)}" class="muted">—</span>
-                                        <span th:each="fk : ${g.referencias}" class="code referencia" th:text="${fk.descripcion()}">fk</span>
+                                        <span th:if="${#lists.isEmpty(a.dependeDe)}" class="muted">—</span>
+                                        <span th:each="fk : ${a.referencias}" class="code referencia" th:text="${fk.descripcion()}">fk</span>
                                     </td>
                                 </tr>
                             </tbody>
@@ -102,21 +99,6 @@
                         <li th:each="fk : ${clavesForaneas}" class="code" th:text="${fk.descripcion()}"></li>
                     </ul>
                     <p class="muted" th:if="${#lists.isEmpty(clavesForaneas)}">El DDL no tiene claves foráneas.</p>
-
-                    <div th:if="${tablasIntermedias != null and !#lists.isEmpty(tablasIntermedias)}">
-                        <h3 class="panel-subtitle">Ciclos resueltos con tablas intermedias</h3>
-                        <ul class="lista-tablas">
-                            <li th:each="ti : ${tablasIntermedias}">
-                                <span class="code" th:text="${ti.tabla}">tabla</span>
-                                sustituye a
-                                <span class="code" th:text="${ti.sustituye.descripcion()}">fk</span>
-                            </li>
-                        </ul>
-                        <details class="ddl-final">
-                            <summary>Ver el DDL final</summary>
-                            <pre class="code-block" th:text="${ddlFinal}"></pre>
-                        </details>
-                    </div>
                 </div>
                 <div th:if="${orden == null}" class="empty">
                     Cuando el DDL sea correcto aparecerán aquí el orden de creación de las tablas y sus claves foráneas.

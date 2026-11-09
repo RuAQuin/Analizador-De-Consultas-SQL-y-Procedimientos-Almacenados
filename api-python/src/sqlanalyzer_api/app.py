@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from .plano_datos import analizar_dependencias, formar_arboles, ordenar_arboles, parsear_ddl, resolver_ciclos
+from .plano_datos import analizar_dependencias, formar_arboles, ordenar_arboles, parsear_ddl
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
@@ -33,12 +33,6 @@ class TablaOrdenadaDto(BaseModel):
     nivel: int
 
 
-class TablaIntermediaDto(BaseModel):
-    tabla: str
-    # FK original que sustituye la tabla intermedia.
-    sustituye: ClaveForaneaDto
-
-
 class NodoArbolDto(BaseModel):
     tabla: str
     # Tabla de la que cuelga (None en la raíz).
@@ -53,9 +47,9 @@ class ArbolDto(BaseModel):
     nodos: list[NodoArbolDto]
 
 
-class GrupoCargaDto(BaseModel):
-    # Raíces de los árboles del grupo (más de una solo si los árboles forman un ciclo).
-    arboles: list[str]
+class ArbolOrdenadoDto(BaseModel):
+    # Raíz del árbol.
+    raiz: str
     nivel: int
     # Raíces de los árboles que deben cargarse antes.
     depende_de: list[str]
@@ -70,14 +64,10 @@ class RespuestaDdl(BaseModel):
     claves_foraneas: list[ClaveForaneaDto] = []
     # Orden topológico de Kahn (paso 2.1): los padres siempre antes que sus hijas.
     orden: list[TablaOrdenadaDto] = []
-    # Tablas intermedias creadas por el sistema para romper ciclos de FK.
-    tablas_intermedias: list[TablaIntermediaDto] = []
-    # DDL que se usará en adelante: el del usuario o, si había ciclos, el reescrito.
-    ddl_final: str | None = None
     # Paso 2.2: árboles de agrupación (cada tabla cuelga de su FK de agrupación).
     arboles: list[ArbolDto] = []
     # Paso 2.3: orden de carga de los árboles (Kahn entre árboles).
-    orden_carga: list[GrupoCargaDto] = []
+    orden_carga: list[ArbolOrdenadoDto] = []
 
 
 @app.get("/salud")
@@ -92,8 +82,7 @@ def validar_ddl(peticion: PeticionDdl) -> RespuestaDdl:
     Paso 2.2: se elige la FK de agrupación de cada tabla y se forman los árboles.
     Paso 2.3: se ordenan los árboles con Kahn para decidir cuál se carga primero.
 
-    Si las FK forman un ciclo, el sistema lo rompe con tablas intermedias y vuelve
-    a analizar el DDL resultante.
+    Los ciclos (entre tablas o entre árboles) no se resuelven: se devuelven como error.
     """
     # Validamos el DDL
     ddl = peticion.ddl
@@ -101,32 +90,24 @@ def validar_ddl(peticion: PeticionDdl) -> RespuestaDdl:
     if not resultado.valido:
         return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(resultado.errores))
 
-    # Comprobamos que las dependencias sean correctas
+    # Comprobamos que las dependencias sean correctas (FK a tablas definidas y sin ciclos).
     dependencias = analizar_dependencias(resultado.sentencias, ddl)
-    intermedias = []
-    if dependencias.ciclo:
-        resolucion = resolver_ciclos(ddl)
-        if resolucion.errores:
-            return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(resolucion.errores),
-                                claves_foraneas=_fks(dependencias.claves_foraneas))
-        ddl, intermedias = resolucion.ddl, resolucion.intermedias
-        resultado = parsear_ddl(ddl)
-        dependencias = analizar_dependencias(resultado.sentencias, ddl)
+    if not dependencias.valido:
+        return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(dependencias.errores),
+                            claves_foraneas=_fks(dependencias.claves_foraneas))
 
-    # Antes de dar la respuesta DDL, formamos los árboles y ordenamos su cómo debe ser su inicialización.
-    arboles = formar_arboles(dependencias) if dependencias.valido else []
-    orden_carga = ordenar_arboles(dependencias, arboles) if dependencias.valido else []
+    # Formamos los árboles y ordenamos cómo debe ser su carga (sin ciclos entre árboles).
+    arboles = formar_arboles(dependencias)
+    orden_carga = ordenar_arboles(dependencias, arboles, ddl)
     return RespuestaDdl(
-        valido=dependencias.valido,
+        valido=orden_carga.valido,
         tablas=resultado.tablas,
-        errores=_errores(dependencias.errores),
+        errores=_errores(orden_carga.errores),
         claves_foraneas=_fks(dependencias.claves_foraneas),
         orden=[TablaOrdenadaDto(tabla=o.tabla, nivel=o.nivel) for o in dependencias.orden],
-        tablas_intermedias=[TablaIntermediaDto(tabla=i.tabla, sustituye=_fks([i.sustituye])[0]) for i in intermedias],
-        ddl_final=ddl if dependencias.valido else None,
         arboles=_arboles(arboles),
-        orden_carga=[GrupoCargaDto(arboles=g.arboles, nivel=g.nivel, depende_de=g.depende_de,
-                                   referencias=_fks(g.referencias)) for g in orden_carga],
+        orden_carga=[ArbolOrdenadoDto(raiz=a.raiz, nivel=a.nivel, depende_de=a.depende_de,
+                                      referencias=_fks(a.referencias)) for a in orden_carga.orden],
     )
 
 

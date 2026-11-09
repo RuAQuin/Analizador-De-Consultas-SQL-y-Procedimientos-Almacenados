@@ -6,10 +6,8 @@ tabla del árbol B referencia una tabla del árbol A, el árbol A tiene que carg
 Esas referencias son las aristas A -> B del grafo de árboles, que se ordena con Kahn.
 
 Aunque las tablas no formen ciclos, los árboles sí pueden formarlos entre sí (una tabla
-de A referencia a B y otra de B referencia a A). Ninguno de esos árboles puede cargarse
-completo antes que el otro, así que se juntan en un mismo grupo de carga: sus tablas se
-cargarán respetando el orden de Kahn de las tablas (paso 2.1), que siempre es válido.
-Lo normal es que cada grupo tenga un único árbol.
+de A referencia a B y otra de B referencia a A). En ese caso ninguno puede cargarse antes
+que el otro: se devuelve un error para que el usuario corrija el DDL.
 """
 
 from __future__ import annotations
@@ -17,37 +15,70 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .arboles import Arbol
-from .dependencias import ClaveForanea, Dependencias, kahn
+from .ddl import ErrorDdl, linea_columna
+from .dependencias import ClaveForanea, Dependencias, describir_fk, kahn, solo_ciclos
 
 
 @dataclass(frozen=True)
-class GrupoCarga:
-    # Raíces de los árboles del grupo (más de una solo si los árboles forman un ciclo).
-    arboles: list[str]
+class ArbolOrdenado:
+    # Raíz del árbol.
+    raiz: str
     # Nivel de Kahn entre árboles: 0 = no depende de ningún otro árbol.
     nivel: int
-    # Raíces de los árboles (de otros grupos) que deben cargarse antes.
+    # Raíces de los árboles que deben cargarse antes.
     depende_de: list[str] = field(default_factory=list)
-    # FK que crean esas dependencias (de una tabla del grupo a una tabla de otro árbol).
+    # FK que crean esas dependencias (de una tabla de este árbol a una tabla de otro árbol).
     referencias: list[ClaveForanea] = field(default_factory=list)
 
 
-def _alcanzables(origen: str, aristas: set[tuple[str, str]]) -> set[str]:
-    """Recorrido en profundidad que devuelve todos los nodos a los que se puede llegar desde el origen.
-    Sirve para detectar ciclos."""
-    # Se guarda lo visitado y lo pendiente por visitar como una pila.
-    vistos, pendientes = {origen}, [origen]
-    # Por cada nodo que saca de la pila, recorre todas las aristas buscando las que salen de él.
-    while pendientes:
-        actual = pendientes.pop()
-        for padre, hija in aristas:
-            if padre == actual and hija not in vistos:
-                vistos.add(hija)
-                pendientes.append(hija)
-    return vistos
+@dataclass(frozen=True)
+class OrdenArboles:
+    orden: list[ArbolOrdenado] = field(default_factory=list)
+    errores: list[ErrorDdl] = field(default_factory=list)
+
+    @property
+    def valido(self) -> bool:
+        return not self.errores
 
 
-def ordenar_arboles(dependencias: Dependencias, arboles: list[Arbol]) -> list[GrupoCarga]:
+def _hay_ciclo(dependencias: Dependencias, agrupacion: dict[str, ClaveForanea | None]) -> bool:
+    """¿Forman ciclo los árboles que salen de esta elección de FK de agrupación?"""
+    def raiz(tabla: str) -> str:
+        while agrupacion[tabla] is not None:
+            tabla = agrupacion[tabla].tabla_padre
+        return tabla
+
+    arbol_de = {t: raiz(t) for t in agrupacion}
+    aristas = {(arbol_de[fk.tabla_padre], arbol_de[fk.tabla]) for fk in dependencias.claves_foraneas
+               if not fk.autorreferencia and fk != agrupacion[fk.tabla]
+               and arbol_de[fk.tabla] != arbol_de[fk.tabla_padre]}
+    _, en_ciclo = kahn(list(dict.fromkeys(arbol_de.values())), aristas)
+    return bool(en_ciclo)
+
+
+def _recomendacion(dependencias: Dependencias, agrupacion: dict[str, ClaveForanea | None],
+                   causantes: list[ClaveForanea]) -> str:
+    """Cómo romper el ciclo cambiando el orden de las columnas FK de una tabla.
+
+    Si una tabla tiene dos padres del mismo nivel, la FK de agrupación es la primera del
+    DDL: escribir antes la otra FK cambia la tabla de árbol. Solo se proponen los cambios
+    que de verdad rompen el ciclo; si no hay ninguno, se recomienda eliminar una FK.
+    """
+    nivel = {o.tabla: o.nivel for o in dependencias.orden}
+    propuestas = []
+    for fk in causantes:
+        actual = agrupacion[fk.tabla]
+        if nivel[fk.tabla_padre] != nivel[actual.tabla_padre]:
+            continue  # Cambiar el orden no cambiaría la FK de agrupación.
+        if not _hay_ciclo(dependencias, {**agrupacion, fk.tabla: fk}):
+            propuestas.append(f"en «{fk.tabla}», escribe {', '.join(fk.columnas)} (→ «{fk.tabla_padre}») "
+                              f"antes que {', '.join(actual.columnas)} (→ «{actual.tabla_padre}»)")
+    if propuestas:
+        return "Para corregirlo, cambia el orden de las columnas FK de una de estas tablas: " + "; ".join(propuestas)
+    return "Para corregirlo, elimina una de estas FK: " + "; ".join(describir_fk(fk) for fk in causantes)
+
+
+def ordenar_arboles(dependencias: Dependencias, arboles: list[Arbol], ddl: str) -> OrdenArboles:
     """Ordena los árboles con Kahn según las FK que van de un árbol a otro."""
     # Diccionarios auxiliares
     arbol_de = {n.tabla: a.raiz for a in arboles for n in a.nodos} # Tabla --> Raíz
@@ -60,29 +91,25 @@ def ordenar_arboles(dependencias: Dependencias, arboles: list[Arbol]) -> list[Gr
                    and arbol_de[fk.tabla] != arbol_de[fk.tabla_padre]] # Van de un árbol a otro.
     aristas = {(arbol_de[fk.tabla_padre], arbol_de[fk.tabla]) for fk in referencias} # Pares árbol padre - árbol hijo.
 
-    # Árboles en ciclo: los que se alcanzan mutuamente forman un mismo grupo.
-    alcance = {r: _alcanzables(r, aristas) for r in raices} # Todo lo que alcanza la raíz.
-    grupo_de: dict[str, str] = {} # Relaciona cada árbol con su raíz.
-    grupos: dict[str, list[str]] = {} # Relaciona la raíz del grupo con sus miembros.
-    for r in raices:
-        if r in grupo_de:
-            continue
-        miembros = [o for o in raices if o in alcance[r] and r in alcance[o]]
-        grupos[r] = miembros
-        for m in miembros:
-            grupo_de[m] = r
+    # Kahn entre árboles; a igual nivel, el orden de los árboles.
+    orden, en_ciclo = kahn(raices, aristas)
 
-    # Kahn entre grupos (sin ciclos por construcción); a igual nivel, el orden de los árboles.
-    aristas_grupos = {(grupo_de[p], grupo_de[h]) for p, h in aristas if grupo_de[p] != grupo_de[h]}
-    orden, _ = kahn(list(grupos), aristas_grupos)
+    # Si los árboles forman un ciclo, es un error: no se intenta resolver, se recomienda cómo corregirlo.
+    if en_ciclo:
+        en_ciclo = solo_ciclos(en_ciclo, aristas)
+        causantes = [fk for fk in referencias if arbol_de[fk.tabla] in en_ciclo and arbol_de[fk.tabla_padre] in en_ciclo]
+        detalle = "; ".join(describir_fk(fk) for fk in causantes)
+        return OrdenArboles(errores=[ErrorDdl(
+            "Hay un ciclo entre los árboles " + ", ".join(f"«{r}»" for r in en_ciclo)
+            + f": ninguno puede cargarse antes que los demás ({detalle}). "
+            + _recomendacion(dependencias, agrupacion, causantes),
+            *linea_columna(ddl, causantes[0].posicion))])
 
     resultado = []
-    for id_grupo, nivel in orden:
-        miembros = grupos[id_grupo]
-        # Referencias que salen de una tabla del grupo hacia una tabla de un árbol de fuera del grupo.
-        externas = [fk for fk in referencias
-                    if arbol_de[fk.tabla] in miembros and arbol_de[fk.tabla_padre] not in miembros]
+    for raiz, nivel in orden:
+        # Referencias que salen de una tabla de este árbol hacia otro árbol.
+        externas = [fk for fk in referencias if arbol_de[fk.tabla] == raiz]
         # Raíces de los árboles a los que apuntan esas FK.
         depende_de = [r for r in raices if any(arbol_de[fk.tabla_padre] == r for fk in externas)]
-        resultado.append(GrupoCarga(miembros, nivel, depende_de, externas))
-    return resultado
+        resultado.append(ArbolOrdenado(raiz, nivel, depende_de, externas))
+    return OrdenArboles(orden=resultado)

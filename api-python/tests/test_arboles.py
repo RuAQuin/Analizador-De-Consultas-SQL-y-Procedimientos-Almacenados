@@ -122,14 +122,13 @@ def test_endpoint_devuelve_los_arboles():
         "tabla": "lineas_compra", "columnas": ["compra_id"], "tabla_padre": "compras", "columnas_padre": ["id"]}}
 
 
-def test_endpoint_con_ciclo_resuelto_incluye_la_tabla_intermedia():
+def test_endpoint_ciclo_entre_tablas_es_error_y_no_tiene_arboles():
     ddl = """CREATE TABLE departamentos (id integer PRIMARY KEY, responsable_id integer REFERENCES empleados(id));
              CREATE TABLE empleados (id integer PRIMARY KEY, departamento_id integer REFERENCES departamentos(id));"""
     cuerpo = cliente.post("/bbdd/ddl", json={"ddl": ddl}).json()
-    [arbol] = cuerpo["arboles"]
-    # La tabla intermedia apunta a departamentos (0) y a empleados (1): cuelga de empleados.
-    assert [(n["tabla"], n["padre"]) for n in arbol["nodos"]] == [
-        ("departamentos", None), ("empleados", "departamentos"), ("departamentos_responsable", "empleados")]
+    assert cuerpo["valido"] is False
+    assert "ciclo de FK" in cuerpo["errores"][0]["mensaje"]
+    assert cuerpo["arboles"] == []
 
 
 def test_endpoint_ddl_invalido_no_tiene_arboles():
