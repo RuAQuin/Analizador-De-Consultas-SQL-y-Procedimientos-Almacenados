@@ -9,7 +9,7 @@ API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
 | 2.1. Se leen las FK del DDL y se ordenan las tablas con Kahn | Hecho |
 | 2.2. FK de agrupación de cada tabla y formación de los árboles | Hecho |
 | 2.3. Kahn entre árboles | Hecho |
-| 3. Prototipo de datos | Pendiente |
+| 3. Prototipo de datos (número de filas por tabla) | Hecho |
 | 4. Revisión y confirmación | Pendiente |
 | 5. CREATE DATABASE / CREATE TABLE | Pendiente |
 | 6. Inserción de datos | Pendiente |
@@ -40,6 +40,7 @@ uvicorn sqlanalyzer_api.app:app --reload
 |--------|------|----------|
 | GET | `/salud` | Comprueba que la API está arrancada |
 | POST | `/bbdd/ddl` | Paso 1: parsea el DDL con pglast. Paso 2.1: lee las FK y ordena las tablas con Kahn. Paso 2.2: forma los árboles de agrupación. Paso 2.3: ordena los árboles con Kahn |
+| POST | `/bbdd/prototipo` | Paso 3: comprueba el número de filas de cada tabla y devuelve una muestra de los datos |
 
 `POST /bbdd/ddl` recibe `{"ddl": "CREATE TABLE ..."}` y siempre responde 200:
 
@@ -86,6 +87,46 @@ uvicorn sqlanalyzer_api.app:app --reload
   del mismo nivel, la FK de agrupación es la primera, así que escribir antes la otra la
   cambia de árbol). Solo se proponen los cambios que de verdad rompen el ciclo; si no hay
   ninguno, recomienda eliminar una de las FK que lo causan.
+
+### Prototipo de datos (paso 3)
+
+`POST /bbdd/prototipo` recibe el DDL y el número de filas de cada tabla (el único dato que
+indica el usuario). La API no guarda nada entre peticiones, así que vuelve a analizar el
+DDL (pasos 1 y 2) y, si es válido, comprueba el prototipo y devuelve una muestra:
+
+```json
+{"ddl": "CREATE TABLE ...", "filas": {"clientes": 100, "compras": 300}}
+
+{"valido": true, "errores": [], "tablas": [
+  {"tabla": "clientes", "filas": 100,
+   "columnas": [{"nombre": "id", "tipo": "serial", "origen": "auto"}, {"nombre": "nombre", "tipo": "varchar(100)", "origen": "tipo"}],
+   "muestra": [["(auto)", "AAA"], ["(auto)", "BBB"], ...]}, ...]}
+```
+
+`plano_datos/prototipo.py`. Los valores no tienen que ser coherentes: solo respetan el tipo
+y se calculan a partir del número de fila, así que no se repiten (sirven para PK y UNIQUE):
+
+| Tipo | Valores |
+|------|---------|
+| `smallint`, `integer`, `bigint` | 1, 2, 3… |
+| `numeric(p,s)`, `real`, `double precision` | 1, 2, 3… dentro de la precisión |
+| `varchar(n)`, `char(n)`, `text` | "AAA", "BBB"… "ZZZ", "AAAB", "BBBB"… recortado a `n` |
+| `boolean` | true, false, true… |
+| `date`, `timestamp`, `time` | 2024-01-01, 2024-01-02… / 00:00:00, 00:00:01… |
+| `uuid` | `00000000-0000-4000-8000-000000000001`… |
+
+- `origen` dice de dónde sale cada columna: `tipo` (según su tipo), `fk` (valor de una fila
+  de la tabla padre) o `auto` (serial, IDENTITY, DEFAULT o columna generada: la rellena
+  PostgreSQL y se muestra como "(auto)").
+- Las FK reparten las filas por turnos entre las del padre (la FK de agrupación primero; las
+  siguientes, en base mixta para no repetir combinaciones en PK compuestas). Una FK de una
+  tabla a sí misma queda a NULL si es nulable.
+- La muestra tiene como mucho 5 filas por tabla, en el orden de Kahn de las tablas.
+- **Avisos de coherencia** (`valido: false`): falta el número de filas de una tabla, está fuera
+  de 0–100.000 o la tabla no existe; un tipo que no se sabe generar (`json`, arrays,
+  `interval`…); una FK NOT NULL hacia una tabla con 0 filas; una PK o UNIQUE que repetiría
+  valores (se indica a partir de qué fila).
+- Las restricciones `CHECK` no se tienen en cuenta.
 
 ## Tests
 

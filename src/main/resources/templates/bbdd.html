@@ -44,7 +44,7 @@
                     <li class="step-sub" th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>FK leídas y orden de Kahn</li>
                     <li class="step-sub" th:classappend="${arboles != null} ? 'step-done'"><span class="step-dot"></span>FK de agrupación y árboles</li>
                     <li class="step-sub" th:classappend="${ordenCarga != null} ? 'step-done'"><span class="step-dot"></span>Kahn entre árboles</li>
-                    <li><span class="step-dot"></span>Prototipo de datos</li>
+                    <li th:classappend="${prototipo != null} ? 'step-done'"><span class="step-dot"></span>Prototipo de datos</li>
                     <li><span class="step-dot"></span>CREATE DATABASE / CREATE TABLE</li>
                     <li><span class="step-dot"></span>Inserción de datos</li>
                     <li><span class="step-dot"></span>ANALYZE</li>
@@ -105,6 +105,73 @@
                 </div>
             </section>
         </div>
+
+        <section class="panel panel-ancho" id="prototipo" th:if="${orden != null and filas != null}">
+            <h2 class="panel-title">3. Prototipo de datos</h2>
+            <p class="muted">
+                Indica cuántas filas quieres en cada tabla. Los valores se generan solos según el tipo de cada
+                columna ("AAA", "BBB"… en los textos, 1, 2, 3… en los números); las FK toman valores de la tabla padre
+                y las columnas serial, IDENTITY o con DEFAULT las rellena PostgreSQL.
+            </p>
+
+            <div class="alert alert-error" role="alert"
+                 th:if="${erroresPrototipo != null and !#lists.isEmpty(erroresPrototipo)}">
+                <strong>Aviso de coherencia</strong>
+                <ul class="lista-avisos">
+                    <li th:each="e : ${erroresPrototipo}" th:text="${e}">aviso</li>
+                </ul>
+            </div>
+
+            <form th:action="@{/bbdd/prototipo}" method="post" class="form" novalidate>
+                <table class="table tabla-filas">
+                    <thead><tr><th>Tabla</th><th>Nivel</th><th>Filas</th></tr></thead>
+                    <tbody>
+                        <tr th:each="t : ${orden}">
+                            <td class="code" th:text="${t.tabla}">clientes</td>
+                            <td th:text="${t.nivel}">0</td>
+                            <td>
+                                <input type="number" min="0" max="100000" class="input-filas"
+                                       th:name="|filas[${t.tabla}]|" th:value="${filas[t.tabla]}"
+                                       th:attr="aria-label=|Filas de ${t.tabla}|">
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <button type="submit" class="btn btn-primary">Generar vista previa</button>
+            </form>
+
+            <div th:if="${prototipo != null}">
+                <h3 class="panel-subtitle">Vista previa</h3>
+                <div class="muestra" th:each="t : ${prototipo.tablas}">
+                    <h4 class="muestra-titulo">
+                        <span class="code" th:text="${t.tabla}">clientes</span>
+                        <span class="muted" th:text="|${t.filas} filas · se muestran ${#lists.size(t.muestra)}|">10 filas</span>
+                    </h4>
+                    <div class="tabla-scroll">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th th:each="c : ${t.columnas}">
+                                        <span th:text="${c.nombre}">id</span>
+                                        <span class="etiqueta" th:if="${c.origen == 'fk'}">FK</span>
+                                        <span class="etiqueta" th:if="${c.origen == 'auto'}">auto</span>
+                                        <br><small class="muted tipo-columna" th:text="${c.tipo}">integer</small>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr th:each="fila : ${t.muestra}">
+                                    <td class="code" th:each="v : ${fila}" th:text="${v}">1</td>
+                                </tr>
+                                <tr th:if="${#lists.isEmpty(t.muestra)}">
+                                    <td class="empty-row" th:attr="colspan=${#lists.size(t.columnas)}">Sin filas</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
     </main>
 </div>
 </body>

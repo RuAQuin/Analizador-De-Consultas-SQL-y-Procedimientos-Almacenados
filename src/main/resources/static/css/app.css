@@ -262,3 +262,22 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
     .grid-2 { grid-template-columns: 1fr; }
     .table { display: block; overflow-x: auto; }
 }
+
+/* ---------- Prototipo de datos (módulo 1, paso 3) ---------- */
+.panel-ancho { margin-top: 1.25rem; }
+.tabla-filas { max-width: 520px; }
+.input-filas { width: 8rem; }
+.lista-avisos { margin: .4rem 0 0; padding-left: 1.2rem; }
+.muestra { margin-bottom: 1.25rem; }
+.muestra-titulo { font-size: .9rem; font-weight: 600; margin: .75rem 0 .4rem; display: flex; gap: .6rem; align-items: baseline; }
+.tabla-scroll { overflow-x: auto; }
+.tipo-columna { text-transform: none; letter-spacing: 0; }
+.etiqueta {
+    display: inline-block;
+    font-size: .65rem;
+    padding: 0 .35rem;
+    border-radius: 4px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    margin-left: .25rem;
+}

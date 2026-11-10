@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from .plano_datos import analizar_dependencias, formar_arboles, ordenar_arboles, parsear_ddl
+from .plano_datos import analizar_dependencias, formar_arboles, generar_prototipo, ordenar_arboles, parsear_ddl
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
@@ -70,6 +70,34 @@ class RespuestaDdl(BaseModel):
     orden_carga: list[ArbolOrdenadoDto] = []
 
 
+class PeticionPrototipo(BaseModel):
+    ddl: str = Field(max_length=100_000)
+    # Número de filas de cada tabla (el único dato que indica el usuario).
+    filas: dict[str, int]
+
+
+class ColumnaPrototipoDto(BaseModel):
+    nombre: str
+    tipo: str
+    # "tipo" (valor según su tipo), "fk" (valor de la tabla padre) o "auto" (lo rellena PostgreSQL).
+    origen: str
+
+
+class TablaPrototipoDto(BaseModel):
+    tabla: str
+    filas: int
+    columnas: list[ColumnaPrototipoDto]
+    # Primeras filas del prototipo, ya formateadas.
+    muestra: list[list[str]]
+
+
+class RespuestaPrototipo(BaseModel):
+    valido: bool
+    errores: list[ErrorDdlDto]
+    # En el orden de Kahn de las tablas (paso 2.1).
+    tablas: list[TablaPrototipoDto] = []
+
+
 @app.get("/salud")
 def salud() -> dict[str, str]:
     """Para saber si la API está levantada."""
@@ -84,22 +112,47 @@ def validar_ddl(peticion: PeticionDdl) -> RespuestaDdl:
 
     Los ciclos (entre tablas o entre árboles) no se resuelven: se devuelven como error.
     """
+    respuesta, _, _ = _analizar_ddl(peticion.ddl)
+    return respuesta
+
+
+@app.post("/bbdd/prototipo", response_model=RespuestaPrototipo)
+def definir_prototipo(peticion: PeticionPrototipo) -> RespuestaPrototipo:
+    """Paso 3: el usuario indica el número de filas de cada tabla y se devuelve una muestra.
+
+    La API no guarda nada entre peticiones: el DDL se vuelve a analizar (pasos 1 y 2).
+    """
+    respuesta, resultado, dependencias = _analizar_ddl(peticion.ddl)
+    if not respuesta.valido:
+        return RespuestaPrototipo(valido=False, errores=respuesta.errores)
+    prototipo = generar_prototipo(resultado.sentencias, dependencias, peticion.filas)
+    return RespuestaPrototipo(
+        valido=prototipo.valido,
+        errores=_errores(prototipo.errores),
+        tablas=[TablaPrototipoDto(
+            tabla=t.tabla, filas=t.filas,
+            columnas=[ColumnaPrototipoDto(nombre=c.nombre, tipo=c.tipo, origen=o) for c, o in zip(t.columnas, t.origenes)],
+            muestra=t.muestra) for t in prototipo.tablas],
+    )
+
+
+def _analizar_ddl(ddl: str):
+    """Pasos 1 y 2. Devuelve la respuesta y, si el DDL es válido, el parseo y las dependencias."""
     # Validamos el DDL
-    ddl = peticion.ddl
     resultado = parsear_ddl(ddl)
     if not resultado.valido:
-        return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(resultado.errores))
+        return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(resultado.errores)), None, None
 
     # Comprobamos que las dependencias sean correctas (FK a tablas definidas y sin ciclos).
     dependencias = analizar_dependencias(resultado.sentencias, ddl)
     if not dependencias.valido:
         return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(dependencias.errores),
-                            claves_foraneas=_fks(dependencias.claves_foraneas))
+                            claves_foraneas=_fks(dependencias.claves_foraneas)), None, None
 
     # Formamos los árboles y ordenamos cómo debe ser su carga (sin ciclos entre árboles).
     arboles = formar_arboles(dependencias)
     orden_carga = ordenar_arboles(dependencias, arboles, ddl)
-    return RespuestaDdl(
+    respuesta = RespuestaDdl(
         valido=orden_carga.valido,
         tablas=resultado.tablas,
         errores=_errores(orden_carga.errores),
@@ -109,6 +162,7 @@ def validar_ddl(peticion: PeticionDdl) -> RespuestaDdl:
         orden_carga=[ArbolOrdenadoDto(raiz=a.raiz, nivel=a.nivel, depende_de=a.depende_de,
                                       referencias=_fks(a.referencias)) for a in orden_carga.orden],
     )
+    return respuesta, resultado, dependencias
 
 
 def _arboles(arboles) -> list[ArbolDto]:

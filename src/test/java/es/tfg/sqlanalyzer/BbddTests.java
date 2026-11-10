@@ -5,9 +5,12 @@ import es.tfg.sqlanalyzer.api.ApiPythonClient;
 import es.tfg.sqlanalyzer.api.Arbol;
 import es.tfg.sqlanalyzer.api.ArbolOrdenado;
 import es.tfg.sqlanalyzer.api.ClaveForanea;
+import es.tfg.sqlanalyzer.api.ColumnaPrototipo;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
 import es.tfg.sqlanalyzer.api.NodoArbol;
+import es.tfg.sqlanalyzer.api.PrototipoDatos;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
+import es.tfg.sqlanalyzer.api.TablaPrototipo;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,11 +18,15 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -29,7 +36,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/** Paso 1 del módulo 1: el DDL escrito por el usuario se valida en la API Python (pglast). */
+/** Módulo 1: validación del DDL (pasos 1 y 2) y prototipo de datos (paso 3), con la API Python simulada. */
 @SpringBootTest
 @AutoConfigureMockMvc
 @WithMockUser(roles = "ADMIN")
@@ -43,18 +50,123 @@ class BbddTests {
     @MockitoBean
     ApiPythonClient api;
 
+    // Valida el DDL (con la respuesta simulada de la API) y devuelve la sesión resultante.
+    private MockHttpSession validarDdl() throws Exception {
+        return (MockHttpSession) mvc.perform(post("/bbdd").with(csrf())
+                        .param("nombreBbdd", "tienda").param("definicionTablas", DDL))
+                .andExpect(redirectedUrl("/bbdd"))
+                .andReturn().getRequest().getSession();
+    }
+
+    // --- Paso 3: prototipo de datos ---
+
+    private static final List<TablaOrdenada> ORDEN = List.of(new TablaOrdenada("clientes", 0), new TablaOrdenada("compras", 1));
+
+    private MockHttpSession validarDdlConDosTablas() throws Exception {
+        var fk = new ClaveForanea("compras", List.of("cliente_id"), "clientes", List.of("id"));
+        when(api.validarDdl(DDL)).thenReturn(new ValidacionDdl(true, List.of("clientes", "compras"), List.of(),
+                List.of(fk), ORDEN, List.of(), List.of()));
+        return validarDdl();
+    }
+
+    @Test
+    // Tras validar el DDL aparece el formulario del prototipo con 10 filas por defecto en cada tabla.
+    void trasValidarElDdlSePidenLasFilasDeCadaTabla() throws Exception {
+        mvc.perform(get("/bbdd").session(validarDdlConDosTablas()))
+           .andExpect(content().string(containsString("3. Prototipo de datos")))
+           .andExpect(content().string(containsString("name=\"filas[clientes]\"")))
+           .andExpect(content().string(containsString("name=\"filas[compras]\"")))
+           .andExpect(content().string(containsString("value=\"10\"")));
+    }
+
+    @Test
+    // Si el prototipo es correcto, se guarda en la sesión y se muestra la vista previa de cada tabla.
+    void prototipoCorrectoMuestraLaVistaPrevia() throws Exception {
+        var sesion = validarDdlConDosTablas();
+        var prototipo = new PrototipoDatos(true, List.of(), List.of(
+                new TablaPrototipo("clientes", 3, List.of(new ColumnaPrototipo("id", "serial", "auto"),
+                        new ColumnaPrototipo("nombre", "varchar(100)", "tipo")),
+                        List.of(List.of("(auto)", "AAA"), List.of("(auto)", "BBB"), List.of("(auto)", "CCC"))),
+                new TablaPrototipo("compras", 6, List.of(new ColumnaPrototipo("cliente_id", "integer", "fk")),
+                        List.of(List.of("1"), List.of("2")))));
+        when(api.definirPrototipo(DDL, Map.of("clientes", 3, "compras", 6))).thenReturn(prototipo);
+
+        mvc.perform(post("/bbdd/prototipo").with(csrf()).session(sesion)
+                        .param("filas[clientes]", "3").param("filas[compras]", "6"))
+           .andExpect(redirectedUrl("/bbdd#prototipo"))
+           .andExpect(request().sessionAttribute("bbdd.prototipo", prototipo));
+
+        mvc.perform(get("/bbdd").session(sesion))
+           .andExpect(content().string(containsString("Vista previa")))
+           .andExpect(content().string(containsString("3 filas · se muestran 3")))
+           .andExpect(content().string(containsString("BBB")))
+           .andExpect(content().string(containsString(">FK<")))
+           .andExpect(content().string(containsString(">auto<")))
+           .andExpect(content().string(containsString("value=\"6\"")));
+    }
+
+    @Test
+    // Un aviso de coherencia vuelve a la pantalla con las filas escritas para corregirlas.
+    void prototipoConAvisoVuelveConLasFilasEscritas() throws Exception {
+        var sesion = validarDdlConDosTablas();
+        when(api.definirPrototipo(DDL, Map.of("clientes", 0, "compras", 6))).thenReturn(new PrototipoDatos(false,
+                List.of(new ErrorDdl("«compras» tiene 6 filas, pero su FK NOT NULL (cliente_id) apunta a «clientes», que tiene 0 filas", null, null)),
+                List.of()));
+
+        mvc.perform(post("/bbdd/prototipo").with(csrf()).session(sesion)
+                        .param("filas[clientes]", "0").param("filas[compras]", "6"))
+           .andExpect(status().isOk())
+           .andExpect(view().name("bbdd"))
+           .andExpect(content().string(containsString("Aviso de coherencia")))
+           .andExpect(content().string(containsString("que tiene 0 filas")))
+           .andExpect(content().string(containsString("value=\"0\"")))
+           .andExpect(request().sessionAttribute("bbdd.prototipo", (Object) null));
+    }
+
+    @Test
+    // Si una cantidad no es un número, se avisa sin llamar a la API.
+    void filasQueNoSonNumerosNoLlamanALaApi() throws Exception {
+        var sesion = validarDdlConDosTablas();
+        mvc.perform(post("/bbdd/prototipo").with(csrf()).session(sesion)
+                        .param("filas[clientes]", "muchas").param("filas[compras]", "6"))
+           .andExpect(status().isOk())
+           .andExpect(content().string(containsString("El número de filas de «clientes» debe ser un número entero")));
+        verify(api, never()).definirPrototipo(anyString(), anyMap());
+    }
+
+    @Test
+    // Sin un DDL validado no se puede definir el prototipo.
+    void prototipoSinDdlValidado() throws Exception {
+        mvc.perform(post("/bbdd/prototipo").with(csrf()).param("filas[clientes]", "3"))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", "Primero valida el DDL de las tablas."));
+    }
+
+    @Test
+    // Validar otro DDL borra de la sesión el DDL anterior y su prototipo.
+    void nuevoDdlLimpiaLaSesion() throws Exception {
+        var sesion = validarDdlConDosTablas();
+        String otro = "CREATE TABLA x (id int);";
+        when(api.validarDdl(otro)).thenReturn(new ValidacionDdl(false, List.of(),
+                List.of(new ErrorDdl("Error de sintaxis", 1, 8)), List.of(), List.of(), List.of(), List.of()));
+
+        mvc.perform(post("/bbdd").with(csrf()).session(sesion).param("nombreBbdd", "tienda").param("definicionTablas", otro))
+           .andExpect(status().isOk())
+           .andExpect(request().sessionAttribute("bbdd.validacion", (Object) null))
+           .andExpect(content().string(not(containsString("3. Prototipo de datos"))));
+    }
+
     @Test
     // Si el DDL es correcto, se redirige a la pantalla mostrando el orden de Kahn y las FK (paso 2.1).
     void ddlValidoMuestraOrdenYClavesForaneas() throws Exception {
         var orden = List.of(new TablaOrdenada("clientes", 0), new TablaOrdenada("compras", 1));
         var fks = List.of(new ClaveForanea("compras", List.of("cliente_id"), "clientes", List.of("id")));
-        when(api.validarDdl(DDL)).thenReturn(
-                new ValidacionDdl(true, List.of("compras", "clientes"), List.of(), fks, orden, List.of(), List.of()));
+        var validacion = new ValidacionDdl(true, List.of("compras", "clientes"), List.of(), fks, orden, List.of(), List.of());
+        when(api.validarDdl(DDL)).thenReturn(validacion);
 
         mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
            .andExpect(redirectedUrl("/bbdd"))
-           .andExpect(flash().attribute("orden", orden))
-           .andExpect(flash().attribute("clavesForaneas", fks));
+           .andExpect(request().sessionAttribute("bbdd.validacion", validacion));
     }
 
     @Test
@@ -83,12 +195,7 @@ class BbddTests {
         when(api.validarDdl(DDL)).thenReturn(new ValidacionDdl(true, List.of(), List.of(), List.of(fkCompras, fkLineas),
                 List.of(new TablaOrdenada("productos", 0)), arboles, List.of()));
 
-        var flash = mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
-           .andExpect(redirectedUrl("/bbdd"))
-           .andExpect(flash().attribute("arboles", arboles))
-           .andReturn().getFlashMap();
-
-        mvc.perform(get("/bbdd").flashAttrs(flash))
+        mvc.perform(get("/bbdd").session(validarDdl()))
            .andExpect(content().string(containsString("Árboles de agrupación")))
            .andExpect(content().string(containsString("Árbol 2")))
            .andExpect(content().string(containsString("└─ compras")))
@@ -106,12 +213,7 @@ class BbddTests {
         when(api.validarDdl(DDL)).thenReturn(new ValidacionDdl(true, List.of(), List.of(), List.of(fkProducto),
                 List.of(new TablaOrdenada("productos", 0)), List.of(), ordenCarga));
 
-        var flash = mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "tienda").param("definicionTablas", DDL))
-           .andExpect(redirectedUrl("/bbdd"))
-           .andExpect(flash().attribute("ordenCarga", ordenCarga))
-           .andReturn().getFlashMap();
-
-        mvc.perform(get("/bbdd").flashAttrs(flash))
+        mvc.perform(get("/bbdd").session(validarDdl()))
            .andExpect(content().string(containsString("Orden de carga de los árboles (Kahn)")))
            .andExpect(content().string(containsString("lineas_compra (producto_id) → productos (id)")));
     }

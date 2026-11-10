@@ -33,13 +33,23 @@ public class ApiPythonClient {
 
     // Paso 1 del módulo 1: pide a la API que parsee el DDL con pglast.
     public ValidacionDdl validarDdl(String ddl) {
+        return post("/bbdd/ddl", Map.of("ddl", ddl), ValidacionDdl.class);
+    }
+
+    // Paso 3 del módulo 1: envía el número de filas de cada tabla y recibe una muestra del prototipo.
+    public PrototipoDatos definirPrototipo(String ddl, Map<String, Integer> filas) {
+        return post("/bbdd/prototipo", Map.of("ddl", ddl, "filas", filas), PrototipoDatos.class);
+    }
+
+    // Envía una petición POST a la API Python y devuelve la respuesta parseada como tipo T.
+    private <T> T post(String ruta, Object cuerpo, Class<T> tipo) {
         try {
-            ValidacionDdl respuesta = rest.post()
-                    .uri("/bbdd/ddl")
+            T respuesta = rest.post()
+                    .uri(ruta)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("ddl", ddl))
+                    .body(cuerpo)
                     .retrieve()
-                    .body(ValidacionDdl.class);
+                    .body(tipo);
             if (respuesta == null) {
                 throw new ApiNoDisponibleException("La API Python ha devuelto una respuesta vacía", null);
             }

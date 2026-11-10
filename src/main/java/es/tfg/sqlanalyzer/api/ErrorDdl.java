@@ -1,7 +1,7 @@
 package es.tfg.sqlanalyzer.api;
 
 /** Error devuelto por la API al parsear el DDL. Línea y columna pueden ser nulas. */
-public record ErrorDdl(String mensaje, Integer linea, Integer columna) {
+public record ErrorDdl(String mensaje, Integer linea, Integer columna) implements java.io.Serializable {
 
     /** Texto para mostrar en la pantalla, con la posición si se conoce. */
     public String descripcion() {

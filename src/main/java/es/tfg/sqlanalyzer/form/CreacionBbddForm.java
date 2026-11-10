@@ -9,7 +9,7 @@ import lombok.Setter;
 /** Datos introducidos en la pantalla "Creación de BBDD" (módulo 1). */
 @Getter
 @Setter
-public class CreacionBbddForm {
+public class CreacionBbddForm implements java.io.Serializable {
 
     @NotBlank(message = "Indica el nombre de la base de datos")
     @Pattern(regexp = "^[a-z_][a-z0-9_]{0,62}$",

@@ -2,6 +2,7 @@ package es.tfg.sqlanalyzer.api;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.io.Serializable;
 import java.util.List;
 
 /**
@@ -24,5 +25,5 @@ public record ValidacionDdl(boolean valido,
                             // Paso 2.2: árboles de agrupación (cada tabla cuelga de su FK de agrupación).
                             List<Arbol> arboles,
                             // Paso 2.3: orden de carga de los árboles (Kahn entre árboles).
-                            @JsonProperty("orden_carga") List<ArbolOrdenado> ordenCarga) {
+                            @JsonProperty("orden_carga") List<ArbolOrdenado> ordenCarga) implements Serializable {
 }
