@@ -10,8 +10,8 @@ API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
 | 2.2. FK de agrupación de cada tabla y formación de los árboles | Hecho |
 | 2.3. Kahn entre árboles | Hecho |
 | 3. Prototipo de datos (número de filas por tabla) | Hecho |
-| 4. Revisión y confirmación | Pendiente |
-| 5. CREATE DATABASE / CREATE TABLE | Pendiente |
+| 4. Revisión y confirmación | Hecho (junto con el paso 5) |
+| 5. CREATE DATABASE / CREATE TABLE | Hecho |
 | 6. Inserción de datos | Pendiente |
 | 7. ANALYZE | Pendiente |
 | 8. pg_dump y registro | Pendiente |
@@ -41,6 +41,7 @@ uvicorn sqlanalyzer_api.app:app --reload
 | GET | `/salud` | Comprueba que la API está arrancada |
 | POST | `/bbdd/ddl` | Paso 1: parsea el DDL con pglast. Paso 2.1: lee las FK y ordena las tablas con Kahn. Paso 2.2: forma los árboles de agrupación. Paso 2.3: ordena los árboles con Kahn |
 | POST | `/bbdd/prototipo` | Paso 3: comprueba el número de filas de cada tabla y devuelve una muestra de los datos |
+| POST | `/bbdd/crear` | Pasos 4 y 5: revisa el nombre de la BBDD contra el servidor, la crea y crea sus tablas en el orden de Kahn |
 
 `POST /bbdd/ddl` recibe `{"ddl": "CREATE TABLE ..."}` y siempre responde 200:
 
@@ -128,8 +129,71 @@ y se calculan a partir del número de fila, así que no se repiten (sirven para 
   valores (se indica a partir de qué fila).
 - Las restricciones `CHECK` no se tienen en cuenta.
 
+### Revisión, confirmación y creación (pasos 4 y 5)
+
+En la WebApp, el botón "Confirmar y crear la BBDD" (debajo de la vista previa) llama a
+`POST /bbdd/crear`, que recibe lo mismo que `/bbdd/prototipo` más el nombre de la BBDD:
+
+```json
+{"nombre": "tienda_demo", "ddl": "CREATE TABLE ...", "filas": {"clientes": 3, "compras": 6}}
+
+{"valido": true, "errores": [], "bbdd": "tienda_demo", "esquemas": [],
+ "tablas": [{"tabla": "clientes", "sentencia": "CREATE TABLE clientes (id serial PRIMARY KEY, ...)"},
+            {"tabla": "compras", "sentencia": "CREATE TABLE compras (...)"}]}
+```
+
+`plano_datos/creacion.py` (con `psycopg`; la conexión sale de las variables `PG_*` de
+`docker-compose.yml`, y sin ellas, de `localhost:5433` con `postgres`/`postgres`):
+
+1. Vuelve a comprobar el DDL (pasos 1 y 2) y el prototipo (paso 3): la API no guarda nada.
+2. **Revisión (paso 4)**: el nombre debe tener un formato válido, no ser una BBDD reservada
+   (`postgres`, `template0`, `template1` ni la del repositorio) y no existir ya en el servidor.
+   Si PostgreSQL no responde, también se avisa.
+3. **Creación (paso 5)**: `CREATE DATABASE` y, en una sola transacción, `CREATE SCHEMA IF NOT EXISTS`
+   de los esquemas del DDL (`ventas.clientes`) y los `CREATE TABLE` en el orden de Kahn. Las
+   sentencias las regenera pglast a partir del árbol del paso 1.
+4. Si falla algún `CREATE TABLE` (por ejemplo, un `CHECK` sobre una columna que no existe, que
+   pglast sí parsea), se deshace la transacción y se borra la BBDD: el error indica la tabla y el
+   mensaje de PostgreSQL.
+
+#### Comprobar que la BBDD se ha creado
+
+Las BBDD se crean en el PostgreSQL del contenedor `sqlanalyzer-postgres`, publicado en el puerto
+**5433** del host. El 5432 es el PostgreSQL instalado en Windows: es otro servidor y allí no aparecen.
+
+Con `psql` dentro del contenedor (no hace falta instalar nada):
+
+```bash
+docker exec -it sqlanalyzer-postgres psql -U postgres -c "\l"                    # BBDD del servidor
+docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo -c "\dt"    # tablas de tienda_demo
+docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo             # consola interactiva
+```
+
+| Comando (en la consola) | Qué muestra |
+|-------------------------|-------------|
+| `\l` | Todas las BBDD: la creada debe aparecer y una que haya fallado, no |
+| `\dt` / `\dt ventas.*` | Tablas del esquema `public` / del esquema `ventas` |
+| `\dn` | Esquemas de la BBDD |
+| `\d compras` | Columnas, tipos, PK y FK de una tabla |
+| `\c otra_bbdd` | Cambiar de BBDD |
+| `\q` | Salir |
+
+Las tablas están vacías hasta el paso 6 (inserción de datos): `SELECT count(*) FROM clientes;` da 0.
+
+Con un cliente gráfico (pgAdmin, DBeaver...): host `localhost`, puerto `5433`, usuario y contraseña
+`postgres`, BBDD `postgres` (desde ella se ven todas las demás).
+
+Para repetir una prueba con el mismo nombre, se borra la BBDD:
+
+```bash
+docker exec -it sqlanalyzer-postgres psql -U postgres -c "DROP DATABASE tienda_demo WITH (FORCE);"
+```
+
 ## Tests
 
 ```bash
 pytest
 ```
+
+Los tests de `test_creacion.py` que necesitan PostgreSQL se saltan si no está arrancado
+(`docker compose up -d`); crean BBDD `test_...` y las borran al terminar.

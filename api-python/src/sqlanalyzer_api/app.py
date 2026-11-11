@@ -2,24 +2,27 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
-from .plano_datos import analizar_dependencias, formar_arboles, generar_prototipo, ordenar_arboles, parsear_ddl
+from .plano_datos import (Conexion, analizar_dependencias, crear_bbdd, formar_arboles, generar_prototipo,
+                          ordenar_arboles, parsear_ddl)
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
+# DTOs
+# Los DTOs de peticiones son lo que manda Java.
 
 class PeticionDdl(BaseModel):
     ddl: str = Field(max_length=100_000)
 
-
+# Error con su fila y columna
 class ErrorDdlDto(BaseModel):
     mensaje: str
     linea: int | None = None
     columna: int | None = None
 
-
+# FK con su tabla padre y sus columnas.
 class ClaveForaneaDto(BaseModel):
     tabla: str
     columnas: list[str]
@@ -27,7 +30,7 @@ class ClaveForaneaDto(BaseModel):
     # Vacío si el DDL no las indica: referencia la PK de la tabla padre.
     columnas_padre: list[str]
 
-
+# Nivel de Kahn de la Tabla.
 class TablaOrdenadaDto(BaseModel):
     tabla: str
     nivel: int
@@ -46,7 +49,7 @@ class ArbolDto(BaseModel):
     # Preorden: cada tabla aparece antes que las que cuelgan de ella.
     nodos: list[NodoArbolDto]
 
-
+# Orden de carga de los árboles.
 class ArbolOrdenadoDto(BaseModel):
     # Raíz del árbol.
     raiz: str
@@ -56,7 +59,7 @@ class ArbolOrdenadoDto(BaseModel):
     # FK que crean esas dependencias.
     referencias: list[ClaveForaneaDto]
 
-
+# ValidaciónDdl.
 class RespuestaDdl(BaseModel):
     valido: bool
     tablas: list[str]
@@ -75,14 +78,14 @@ class PeticionPrototipo(BaseModel):
     # Número de filas de cada tabla (el único dato que indica el usuario).
     filas: dict[str, int]
 
-
+# Información de las columnas
 class ColumnaPrototipoDto(BaseModel):
     nombre: str
     tipo: str
     # "tipo" (valor según su tipo), "fk" (valor de la tabla padre) o "auto" (lo rellena PostgreSQL).
     origen: str
 
-
+# Información de las tablas.
 class TablaPrototipoDto(BaseModel):
     tabla: str
     filas: int
@@ -90,12 +93,38 @@ class TablaPrototipoDto(BaseModel):
     # Primeras filas del prototipo, ya formateadas.
     muestra: list[list[str]]
 
-
+# PrototipoDatos.
 class RespuestaPrototipo(BaseModel):
     valido: bool
     errores: list[ErrorDdlDto]
     # En el orden de Kahn de las tablas (paso 2.1).
     tablas: list[TablaPrototipoDto] = []
+
+
+class PeticionCreacion(PeticionPrototipo):
+    # Nombre de la base de datos que se va a crear.
+    nombre: str = Field(max_length=63)
+
+
+class TablaCreadaDto(BaseModel):
+    tabla: str
+    # CREATE TABLE ejecutado.
+    sentencia: str
+
+# CreacionBbdd.
+class RespuestaCreacion(BaseModel):
+    valido: bool
+    errores: list[ErrorDdlDto]
+    bbdd: str | None = None
+    # Esquemas creados (CREATE SCHEMA) antes de las tablas.
+    esquemas: list[str] = []
+    # En el orden en que se han creado (Kahn).
+    tablas: list[TablaCreadaDto] = []
+
+
+def conexion() -> Conexion:
+    """Conexión con PostgreSQL (los tests la sustituyen)."""
+    return Conexion.desde_entorno()
 
 
 @app.get("/salud")
@@ -136,6 +165,29 @@ def definir_prototipo(peticion: PeticionPrototipo) -> RespuestaPrototipo:
     )
 
 
+@app.post("/bbdd/crear", response_model=RespuestaCreacion)
+def crear(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> RespuestaCreacion:
+    """Paso 4: el usuario confirma y se revisa el nombre de la BBDD contra el servidor.
+    Paso 5: CREATE DATABASE y CREATE TABLE en el orden de Kahn.
+
+    Antes se vuelven a comprobar el DDL (pasos 1 y 2) y el prototipo (paso 3): la API no guarda nada.
+    """
+    respuesta, resultado, dependencias = _analizar_ddl(peticion.ddl)
+    if not respuesta.valido:
+        return RespuestaCreacion(valido=False, errores=respuesta.errores)
+    prototipo = generar_prototipo(resultado.sentencias, dependencias, peticion.filas)
+    if not prototipo.valido:
+        return RespuestaCreacion(valido=False, errores=_errores(prototipo.errores))
+    creacion = crear_bbdd(peticion.nombre, resultado.sentencias, dependencias, con)
+    return RespuestaCreacion(
+        valido=creacion.valido,
+        errores=_errores(creacion.errores),
+        bbdd=creacion.bbdd,
+        esquemas=creacion.esquemas,
+        tablas=[TablaCreadaDto(tabla=t.tabla, sentencia=t.sentencia) for t in creacion.tablas],
+    )
+
+
 def _analizar_ddl(ddl: str):
     """Pasos 1 y 2. Devuelve la respuesta y, si el DDL es válido, el parseo y las dependencias."""
     # Validamos el DDL
@@ -164,11 +216,12 @@ def _analizar_ddl(ddl: str):
     )
     return respuesta, resultado, dependencias
 
+# Conversión de objetos internos en en listas de DTOs.
 
 def _arboles(arboles) -> list[ArbolDto]:
     return [ArbolDto(raiz=a.raiz, nodos=[
         NodoArbolDto(tabla=n.tabla, padre=n.padre, nivel=n.nivel,
-                     fk_agrupacion=_fks([n.fk_agrupacion])[0] if n.fk_agrupacion else None)
+                     fk_agrupacion=_fks([n.fk_agrupacion])[0] if n.fk_agrupacion else None) # Si el nodo es la raíz --> None.
         for n in a.nodos]) for a in arboles]
 
 

@@ -6,10 +6,12 @@ import es.tfg.sqlanalyzer.api.Arbol;
 import es.tfg.sqlanalyzer.api.ArbolOrdenado;
 import es.tfg.sqlanalyzer.api.ClaveForanea;
 import es.tfg.sqlanalyzer.api.ColumnaPrototipo;
+import es.tfg.sqlanalyzer.api.CreacionBbdd;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
 import es.tfg.sqlanalyzer.api.NodoArbol;
 import es.tfg.sqlanalyzer.api.PrototipoDatos;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
+import es.tfg.sqlanalyzer.api.TablaCreada;
 import es.tfg.sqlanalyzer.api.TablaPrototipo;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
 import org.junit.jupiter.api.Test;
@@ -29,6 +31,7 @@ import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -36,7 +39,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/** Módulo 1: validación del DDL (pasos 1 y 2) y prototipo de datos (paso 3), con la API Python simulada. */
+/** Módulo 1: validación del DDL (pasos 1 y 2), prototipo de datos (paso 3) y creación de la BBDD (pasos 4 y 5),
+ * con la API Python simulada. */
 @SpringBootTest
 @AutoConfigureMockMvc
 @WithMockUser(roles = "ADMIN")
@@ -280,5 +284,118 @@ class BbddTests {
            .andExpect(status().isOk())
            .andExpect(model().attributeHasFieldErrors("form", "definicionTablas"));
         verify(api, never()).validarDdl(anyString());
+    }
+
+    // --- Pasos 4 y 5: revisión, confirmación y CREATE DATABASE / CREATE TABLE ---
+
+    private static final Map<String, Integer> FILAS = Map.of("clientes", 3, "compras", 6);
+
+    // Valida el DDL y genera un prototipo correcto: devuelve la sesión lista para confirmar.
+    private MockHttpSession conPrototipo() throws Exception {
+        var sesion = validarDdlConDosTablas();
+        when(api.definirPrototipo(DDL, FILAS)).thenReturn(new PrototipoDatos(true, List.of(), List.of(
+                new TablaPrototipo("clientes", 3, List.of(new ColumnaPrototipo("id", "integer", "tipo")), List.of()),
+                new TablaPrototipo("compras", 6, List.of(new ColumnaPrototipo("cliente_id", "integer", "fk")), List.of()))));
+        mvc.perform(post("/bbdd/prototipo").with(csrf()).session(sesion)
+                        .param("filas[clientes]", "3").param("filas[compras]", "6"))
+           .andExpect(redirectedUrl("/bbdd#prototipo"));
+        return sesion;
+    }
+
+    private static CreacionBbdd creada() {
+        return new CreacionBbdd(true, List.of(), "tienda", List.of(), List.of(
+                new TablaCreada("clientes", "CREATE TABLE clientes (id integer PRIMARY KEY)"),
+                new TablaCreada("compras", "CREATE TABLE compras (cliente_id integer REFERENCES clientes (id))")));
+    }
+
+    @Test
+    // Con el prototipo correcto aparece el resumen y el botón para confirmar.
+    void conPrototipoSeMuestraElResumenYElBoton() throws Exception {
+        mvc.perform(get("/bbdd").session(conPrototipo()))
+           .andExpect(content().string(containsString("4. Revisión y confirmación")))
+           .andExpect(content().string(containsString("Confirmar y crear la BBDD")))
+           .andExpect(content().string(containsString("clientes → compras")))
+           .andExpect(content().string(containsString(">9<")));
+    }
+
+    @Test
+    // Sin prototipo no aparece el botón.
+    void sinPrototipoNoHayBoton() throws Exception {
+        mvc.perform(get("/bbdd").session(validarDdlConDosTablas()))
+           .andExpect(content().string(not(containsString("Confirmar y crear la BBDD"))));
+    }
+
+    @Test
+    // Al confirmar se crea la BBDD: se guarda en la sesión, se muestran las tablas creadas y se bloquean las filas.
+    void confirmarCreaLaBbdd() throws Exception {
+        var sesion = conPrototipo();
+        var creacion = creada();
+        when(api.crearBbdd("tienda", DDL, FILAS)).thenReturn(creacion);
+
+        mvc.perform(post("/bbdd/crear").with(csrf()).session(sesion))
+           .andExpect(redirectedUrl("/bbdd#creacion"))
+           .andExpect(flash().attribute("aviso", containsString("«tienda» con 2 tablas")))
+           .andExpect(request().sessionAttribute("bbdd.creacion", creacion));
+
+        mvc.perform(get("/bbdd").session(sesion))
+           .andExpect(content().string(containsString("CREATE TABLE compras (cliente_id integer REFERENCES clientes (id))")))
+           .andExpect(content().string(not(containsString("Confirmar y crear la BBDD"))))
+           .andExpect(content().string(containsString("disabled")));
+    }
+
+    @Test
+    // Si la API no crea la BBDD (por ejemplo, porque ya existe), se avisa y se puede volver a intentar.
+    void bbddQueYaExisteMuestraElAviso() throws Exception {
+        var sesion = conPrototipo();
+        when(api.crearBbdd("tienda", DDL, FILAS)).thenReturn(new CreacionBbdd(false,
+                List.of(new ErrorDdl("Ya existe una base de datos «tienda» en el servidor: elige otro nombre", null, null)),
+                null, List.of(), List.of()));
+
+        mvc.perform(post("/bbdd/crear").with(csrf()).session(sesion))
+           .andExpect(status().isOk())
+           .andExpect(view().name("bbdd"))
+           .andExpect(content().string(containsString("No se ha creado la base de datos")))
+           .andExpect(content().string(containsString("Ya existe una base de datos «tienda»")))
+           .andExpect(content().string(containsString("Confirmar y crear la BBDD")))
+           .andExpect(request().sessionAttribute("bbdd.creacion", (Object) null));
+    }
+
+    @Test
+    // Si la API no responde al confirmar, se avisa sin perder el prototipo.
+    void apiNoDisponibleAlConfirmar() throws Exception {
+        var sesion = conPrototipo();
+        when(api.crearBbdd(anyString(), anyString(), anyMap()))
+                .thenThrow(new ApiNoDisponibleException("No se ha podido contactar con la API Python", null));
+
+        mvc.perform(post("/bbdd/crear").with(csrf()).session(sesion))
+           .andExpect(status().isOk())
+           .andExpect(model().attribute("error", containsString("API Python")))
+           .andExpect(content().string(containsString("Vista previa")));
+    }
+
+    @Test
+    // Sin prototipo no se puede confirmar.
+    void confirmarSinPrototipo() throws Exception {
+        mvc.perform(post("/bbdd/crear").with(csrf()).session(validarDdlConDosTablas()))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", "Primero genera la vista previa del prototipo de datos."));
+        verify(api, never()).crearBbdd(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    // Una vez creada, no se puede crear otra vez ni cambiar el prototipo.
+    void bbddCreadaNoSeVuelveACrear() throws Exception {
+        var sesion = conPrototipo();
+        when(api.crearBbdd("tienda", DDL, FILAS)).thenReturn(creada());
+        mvc.perform(post("/bbdd/crear").with(csrf()).session(sesion)).andExpect(redirectedUrl("/bbdd#creacion"));
+
+        mvc.perform(post("/bbdd/crear").with(csrf()).session(sesion))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", containsString("ya está creada")));
+        mvc.perform(post("/bbdd/prototipo").with(csrf()).session(sesion)
+                        .param("filas[clientes]", "1").param("filas[compras]", "1"))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", containsString("ya está creada")));
+        verify(api, times(1)).crearBbdd(anyString(), anyString(), anyMap());
     }
 }

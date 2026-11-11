@@ -281,3 +281,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
     color: var(--accent);
     margin-left: .25rem;
 }
+
+/* Pasos 4 y 5: resumen antes de crear la BBDD y sentencias ejecutadas. */
+.sin-borde { border: 0; padding: 0; margin: 0; min-width: 0; }
+.resumen { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1.25rem; margin: 1rem 0 1.25rem; }
+.resumen dt { color: var(--muted); font-size: .85rem; }
+.resumen dd { margin: 0; font-weight: 600; }
+.sentencia { white-space: pre-wrap; word-break: break-word; font-size: .8rem; }

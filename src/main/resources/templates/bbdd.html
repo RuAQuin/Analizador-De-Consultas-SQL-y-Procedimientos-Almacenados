@@ -45,7 +45,7 @@
                     <li class="step-sub" th:classappend="${arboles != null} ? 'step-done'"><span class="step-dot"></span>FK de agrupación y árboles</li>
                     <li class="step-sub" th:classappend="${ordenCarga != null} ? 'step-done'"><span class="step-dot"></span>Kahn entre árboles</li>
                     <li th:classappend="${prototipo != null} ? 'step-done'"><span class="step-dot"></span>Prototipo de datos</li>
-                    <li><span class="step-dot"></span>CREATE DATABASE / CREATE TABLE</li>
+                    <li th:classappend="${creacion != null} ? 'step-done'"><span class="step-dot"></span>Revisión y confirmación · CREATE DATABASE / CREATE TABLE</li>
                     <li><span class="step-dot"></span>Inserción de datos</li>
                     <li><span class="step-dot"></span>ANALYZE</li>
                     <li><span class="step-dot"></span>pg_dump y registro</li>
@@ -123,6 +123,8 @@
             </div>
 
             <form th:action="@{/bbdd/prototipo}" method="post" class="form" novalidate>
+                <!-- Una vez creada la BBDD las filas no se pueden cambiar: hay que validar otro DDL. -->
+                <fieldset class="sin-borde" th:disabled="${creacion != null}">
                 <table class="table tabla-filas">
                     <thead><tr><th>Tabla</th><th>Nivel</th><th>Filas</th></tr></thead>
                     <tbody>
@@ -138,6 +140,7 @@
                     </tbody>
                 </table>
                 <button type="submit" class="btn btn-primary">Generar vista previa</button>
+                </fieldset>
             </form>
 
             <div th:if="${prototipo != null}">
@@ -170,6 +173,57 @@
                         </table>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <section class="panel panel-ancho" id="creacion" th:if="${prototipo != null}">
+            <h2 class="panel-title">4. Revisión y confirmación · 5. CREATE DATABASE / CREATE TABLE</h2>
+
+            <div class="alert alert-error" role="alert"
+                 th:if="${erroresCreacion != null and !#lists.isEmpty(erroresCreacion)}">
+                <strong>No se ha creado la base de datos</strong>
+                <ul class="lista-avisos">
+                    <li th:each="e : ${erroresCreacion}" th:text="${e}">aviso</li>
+                </ul>
+            </div>
+
+            <div th:if="${creacion == null}">
+                <p class="muted">
+                    Revisa el resumen antes de confirmar. Se creará la base de datos en PostgreSQL y sus tablas en el
+                    orden de Kahn. Si alguna tabla falla, no se deja nada creado.
+                </p>
+                <dl class="resumen">
+                    <dt>Base de datos</dt>
+                    <dd class="code" th:text="${form.nombreBbdd}">tienda_demo</dd>
+                    <dt>Tablas</dt>
+                    <dd th:text="${#lists.size(orden)}">2</dd>
+                    <dt>Filas en total</dt>
+                    <dd th:text="${#aggregates.sum(prototipo.tablas.![filas])}">9</dd>
+                    <dt>Orden de creación</dt>
+                    <dd class="code" th:text="${#strings.listJoin(orden.![tabla], ' → ')}">clientes → compras</dd>
+                </dl>
+                <form th:action="@{/bbdd/crear}" method="post">
+                    <button type="submit" class="btn btn-primary">Confirmar y crear la BBDD</button>
+                </form>
+            </div>
+
+            <div th:if="${creacion != null}">
+                <p>
+                    Base de datos <strong class="code" th:text="${creacion.bbdd}">tienda_demo</strong> creada.
+                    <span th:if="${!#lists.isEmpty(creacion.esquemas)}"
+                          th:text="|Esquemas: ${#strings.listJoin(creacion.esquemas, ', ')}.|">Esquemas: ventas.</span>
+                </p>
+                <table class="table">
+                    <thead><tr><th>#</th><th>Tabla</th><th>CREATE TABLE ejecutado</th></tr></thead>
+                    <tbody>
+                        <tr th:each="t, it : ${creacion.tablas}">
+                            <td th:text="${it.count}">1</td>
+                            <td class="code" th:text="${t.tabla}">clientes</td>
+                            <td class="code sentencia" th:text="${t.sentencia}">CREATE TABLE clientes (...)</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="muted">Para crear otra base de datos, valida un DDL nuevo.</p>
             </div>
         </section>
     </main>
