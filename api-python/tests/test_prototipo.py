@@ -56,10 +56,10 @@ def test_columnas_que_rellena_postgresql():
     assert tabla(proto, "compras").origenes == ["auto", "fk", "tipo", "tipo"]
 
 
-def test_fk_toma_valores_del_padre_por_turnos():
+def test_fk_toma_valores_del_padre_en_bloques():
     proto = prototipo(TIENDA, FILAS)
-    # 6 compras repartidas entre 3 clientes (ids 1, 2, 3 de su serial).
-    assert columna(proto, "compras", "cliente_id") == ["1", "2", "3", "1", "2"]
+    # 6 compras repartidas en bloques entre 3 clientes (ids 1, 2, 3 de su serial): 2 por cliente.
+    assert columna(proto, "compras", "cliente_id") == ["1", "1", "2", "2", "3"]
     # La FK a una PK de texto toma el valor de texto del padre.
     assert set(columna(proto, "lineas", "producto")) <= {"AAA", "BBB"}
 
@@ -98,7 +98,9 @@ def test_pk_compuesta_de_fk_no_repite_combinaciones():
     # 2 × 3 = 6 combinaciones: la séptima fila repetiría la PK.
     [error] = prototipo(ddl, {"alumnos": 3, "asignaturas": 2, "matriculas": 7}).errores
     assert "(asignatura_id, alumno_id)" in error.mensaje
-    assert "a partir de la fila 7" in error.mensaje
+    # La primera asignatura recibe 4 matrículas y solo hay 3 alumnos: se repite en la fila 4.
+    assert "a partir de la fila 4" in error.mensaje
+    assert error.mensaje.endswith("reduce las filas de «matriculas» o da más filas a sus tablas padre")
 
 
 # --- Avisos de coherencia ---
@@ -143,6 +145,7 @@ def test_clave_unica_que_se_quedaria_sin_valores():
     # boolean solo tiene dos valores distintos.
     [error] = prototipo("CREATE TABLE t (b boolean UNIQUE);", {"t": 3}).errores
     assert "La clave única (b) de «t» repetiría valores a partir de la fila 3" in error.mensaje
+    assert error.mensaje.endswith("reduce las filas de «t» a 2 como máximo")
 
 
 cliente = TestClient(app)

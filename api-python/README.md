@@ -12,7 +12,9 @@ API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
 | 3. Prototipo de datos (número de filas por tabla) | Hecho |
 | 4. Revisión y confirmación | Hecho (junto con el paso 5) |
 | 5. CREATE DATABASE / CREATE TABLE | Hecho |
-| 6. Inserción de datos | Pendiente |
+| 6.1. Inserción: recorrer los árboles en orden de carga | Hecho (sin endpoint: lo usarán 6.2 y 6.3) |
+| 6.2. Inserción: generar las tuplas de cada árbol en profundidad | Hecho (sin endpoint: lo usará 6.3) |
+| 6.3. Inserción: escribir las tuplas en PostgreSQL | Pendiente |
 | 7. ANALYZE | Pendiente |
 | 8. pg_dump y registro | Pendiente |
 
@@ -119,9 +121,11 @@ y se calculan a partir del número de fila, así que no se repiten (sirven para 
 - `origen` dice de dónde sale cada columna: `tipo` (según su tipo), `fk` (valor de una fila
   de la tabla padre) o `auto` (serial, IDENTITY, DEFAULT o columna generada: la rellena
   PostgreSQL y se muestra como "(auto)").
-- Las FK reparten las filas por turnos entre las del padre (la FK de agrupación primero; las
-  siguientes, en base mixta para no repetir combinaciones en PK compuestas). Una FK de una
-  tabla a sí misma queda a NULL si es nulable.
+- La FK de agrupación reparte las filas en bloques consecutivos y equilibrados entre las del
+  padre (6 compras y 3 clientes: 1, 1, 2, 2, 3, 3; 7 compras: 1, 1, 1, 2, 2, 3, 3), para que al
+  recorrer el árbol en profundidad (paso 6.2) se cumpla `id = contador + 1`. Las demás FK, en base
+  mixta para no repetir combinaciones en PK compuestas. Una FK de una tabla a sí misma queda a
+  NULL si es nulable.
 - La muestra tiene como mucho 5 filas por tabla, en el orden de Kahn de las tablas.
 - **Avisos de coherencia** (`valido: false`): falta el número de filas de una tabla, está fuera
   de 0–100.000 o la tabla no existe; un tipo que no se sabe generar (`json`, arrays,
@@ -188,6 +192,44 @@ Para repetir una prueba con el mismo nombre, se borra la BBDD:
 ```bash
 docker exec -it sqlanalyzer-postgres psql -U postgres -c "DROP DATABASE tienda_demo WITH (FORCE);"
 ```
+
+### Inserción de datos (paso 6)
+
+`plano_datos/insercion.py` sigue el sub-diagrama «Inserción de datos» en tres pasos:
+
+- **6.1. Recorrer los árboles en orden de carga** (hecho): `recorrer_arboles(arboles, orden_carga)`
+  devuelve los árboles uno a uno («Siguiente árbol» … «¿Último árbol?») en el orden del paso 2.3,
+  con un `EstadoCarga` compartido: un contador de filas por tabla (para `id = contador + 1`) y los
+  árboles ya cargados. Comprueba que los árboles de los que depende cada uno ya se han cargado y no
+  recorre nada si hay un ciclo entre árboles.
+- **6.2. Generar las tuplas de cada árbol en profundidad** (hecho): `generar_tuplas(arbol_a_cargar,
+  generador)` sigue los bucles interiores del diagrama: genera una tupla de la raíz (id = contador + 1),
+  después sus tuplas hijas y, bajo cada una, sus nietas; cuando no quedan, sube a la tabla padre y
+  genera su siguiente tupla. `generar_carga` une 6.1 y 6.2 (todas las tuplas, árbol a árbol).
+  - Usa el mismo `Generador` que la vista previa (`preparar_generador` en `prototipo.py`): lo que se
+    genera coincide con lo que el usuario ha confirmado.
+  - Las hijas de la fila k del padre son un bloque de filas consecutivas (`Generador.filas_hijas`), así
+    que cada tabla se genera en orden y su id es siempre el contador + 1.
+  - Tuplas huérfanas: si la tabla padre tiene 0 filas y la FK admite NULL, se generan al final del
+    árbol con la FK a NULL.
+  - serial e IDENTITY reciben id = contador + 1; un `DEFAULT` que no es un número y las columnas
+    `GENERATED ... STORED` quedan como `AUTO` (las rellenará PostgreSQL).
+  - Al terminar cada árbol comprueba que cada tabla tiene todas sus filas.
+  - Genera las tuplas una a una, sin guardarlas: 300.000 tuplas (100.000 por tabla) en ~1,5 s.
+  - Todavía no tiene endpoint: no inserta nada.
+- **6.3. Escribir las tuplas en PostgreSQL** (pendiente).
+
+Problemas que habrá que resolver en 6.3 (marcados con `PENDIENTE 6.3` en el código):
+
+| Paso | Problema |
+|------|----------|
+| 6.3 | El orden de carga solo ordena **entre** árboles. Una FK que no es de agrupación entre dos tablas del mismo árbol (`envios → direcciones`, las dos en el árbol de `clientes`) puede apuntar a una tupla aún no generada. Su valor ya es correcto, pero hay que insertar tabla a tabla en el orden de Kahn (paso 2.1). |
+| 6.3 | serial/IDENTITY tienen valor (id = contador + 1): usar `OVERRIDING SYSTEM VALUE` con `GENERATED ALWAYS` y ajustar la secuencia al final (`setval`). |
+| 6.3 | Los valores `AUTO` se dejan fuera del `INSERT`. |
+| 6.3 | Un `INSERT` puede fallar (`CHECK`, triggers...): una sola transacción que se deshace entera e indica la tabla y la fila. |
+| 6.3 | Con muchas filas es una tarea larga: por lotes y en un worker asíncrono. |
+
+Mientras tanto, la BBDD creada en el paso 5 queda con las tablas vacías.
 
 ## Tests
 

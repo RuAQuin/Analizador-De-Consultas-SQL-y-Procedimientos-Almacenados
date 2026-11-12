@@ -13,8 +13,10 @@ Se calculan a partir del número de fila, así que siempre salen iguales y no se
     uuid               a partir del número de fila
 
 Las columnas IDENTITY, serial, con DEFAULT o generadas las rellena PostgreSQL. Las
-columnas FK toman el valor de una fila de la tabla padre, repartiendo las filas por
-turnos (la FK de agrupación primero). Las restricciones CHECK no se tienen en cuenta.
+columnas FK tomcolumnas FK toman el valor de una fila de la tabla padre: la FK de agrupación reparte las
+filas en bloques consecutivos (las primeras hijas para la primera fila del padre, las
+siguientes para la segunda...), así que al recorrer el árbol en profundidad (paso 6.2) cada
+tabla se genera en orden (id = contador + 1). Las restricciones CHECK no se tienen en cuenta.
 
 Antes de aceptar el prototipo se comprueba que la carga no fallaría ("aviso de
 coherencia"): número de filas válido, tipos que se saben generar, FK NOT NULL con
@@ -23,7 +25,7 @@ filas en el padre y claves PK/UNIQUE sin valores repetidos.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -45,6 +47,7 @@ _SOPORTADOS = set(_ENTEROS) | _TEXTOS | {"numeric", "float4", "float8", "bool", 
 _INICIO = datetime(2024, 1, 1) # Fecha de inicio de generación de fechas.
 _AUTO = object()  # Marca de valor que genera PostgreSQL, no se sabe que valor tendrá.
 # Se usa object para no confundirse con ningún valor real.
+AUTO = _AUTO  # Nombre público: en la inserción (paso 6) esas columnas se dejan fuera del INSERT.
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,7 @@ class Columna:
     array: bool # ¿Es un array?
     nulable: bool # ¿Admite NULL?
     autogenerada: bool   # IDENTITY, serial, DEFAULT o columna generada.
+    generada: bool = False  # GENERATED ALWAYS AS (...) STORED: nunca se puede escribir.
 
 
 @dataclass(frozen=True)
@@ -113,10 +117,10 @@ def leer_columnas(crear: ast.CreateStmt) -> tuple[list[Columna], list[tuple[str,
         autogenerada = base in _SERIALES or e.raw_default is not None or bool(tipos & {
             enums.ConstrType.CONSTR_IDENTITY, enums.ConstrType.CONSTR_DEFAULT, enums.ConstrType.CONSTR_GENERATED}) # Datos Autogenerados.
         tipo = RawStream()(e.typeName).replace("pg_catalog.", "") # Tipo como SQL.
+        generada = enums.ConstrType.CONSTR_GENERATED in tipos # Columna calculada por PostgreSQL.
         columnas.append(Columna(e.colname, tipo, base, mods, bool(e.typeName.arrayBounds),
-                                True, autogenerada)) # Todas las columnas son nullables
-    columnas = [Columna(c.nombre, c.tipo, c.base, c.modificadores, c.array, c.nombre not in no_nulas, c.autogenerada)
-                for c in columnas] # Nulabilidad real.
+                                True, autogenerada, generada)) # Todas las columnas son nullables
+    columnas = [replace(c, nulable=c.nombre not in no_nulas) for c in columnas] # Nulabilidad real.
     return columnas, claves, pk
 
 
@@ -197,14 +201,16 @@ class Generador:
     def _fila_padre(self, tabla: str, fk: ClaveForanea, i: int) -> int | None:
         """Fila del padre a la que apunta la FK en la fila ``i`` (None si el padre no tiene filas).
 
-        La primera FK reparte las filas por turnos (i % filas del padre); las siguientes usan
-        el resto de cifras de i, como un número en base mixta. Así las combinaciones de FK no
-        se repiten mientras haya combinaciones posibles (útil en PK compuestas de FK).
+        La FK de agrupación (la primera) reparte las filas en bloques consecutivos y equilibrados:
+        la fila i va a la fila i * filas_padre // filas de la tabla (con 6 compras y 3 clientes:
+        0, 0, 1, 1, 2, 2). Las siguientes usan las cifras de i como un número en base mixta
+        (i % filas, luego i // filas...). Dentro de un bloque las combinaciones de FK no se repiten
+        mientras haya combinaciones posibles (útil en PK compuestas de FK).
         """
         if fk.autorreferencia:
             return i # La fila se apunta a si misma.
-        resto = i
-        # Se recorren las FKs en orden.
+        resto, primera = i, True
+        # IMPORTANTE Se recorren las FKs en orden IMPORTANTE.
         for anterior in self.fks[tabla]:
             if anterior.autorreferencia:
                 continue
@@ -213,12 +219,26 @@ class Generador:
             if total == 0:
                 if anterior is fk:
                     return None
+                primera = False # FK con el padre anterior vacío.
                 continue
-            # Cálculo de las tablas hijas.
             if anterior is fk:
-                return resto % total
-            resto //= total
+                # FK de agrupación: bloques. Resto de FK: base mixta.
+                return i * total // self.filas[tabla] if primera else resto % total
+            if not primera:
+                resto //= total
+            primera = False # Se deja atras la primera FK.
         return None
+
+    def filas_hijas(self, hija: str, fila_padre: int) -> range:
+        """Paso 6.2: filas de ``hija`` que cuelgan de la fila ``fila_padre`` por su FK de agrupación.
+
+        Es el bloque de filas j con j * filas_padre // filas_hija == fila_padre (inverso de _fila_padre).
+        """
+        agrupacion = next(fk for fk in self.fks[hija] if not fk.autorreferencia)
+        hijas, padres = self.filas[hija], self.filas[agrupacion.tabla_padre]
+        inicio = -(-fila_padre * hijas // padres) # Redondeo hacia arriba.
+        fin = -(-(fila_padre + 1) * hijas // padres)
+        return range(inicio, fin) # Es un intervalo de la primera fila a la última
 
     def valor(self, tabla: str, columna: str, i: int):
         """Calcula el valor de la fila."""
@@ -232,6 +252,8 @@ class Generador:
                     return None
                 referenciadas = fk.columnas_padre or self.pks[fk.tabla_padre] # Referencia a la columna indicada o a la PK del padre.
                 return self.valor(fk.tabla_padre, referenciadas[fk.columnas.index(columna)], fila) # Copia el valor del padre.
+        if col.generada:
+            return _AUTO # Columna calculada: la escribe siempre PostgreSQL.
         if col.autogenerada:
             # Los datos seriales tratan de predecirse para las FKs, Los datos DEFAULT no.
             return valor_por_tipo(col, i) if col.base in _ENTEROS or col.base in _SERIALES else _AUTO 
@@ -289,6 +311,7 @@ def _primera_repetida(generador: Generador, tabla: str, clave: tuple[str, ...], 
         tupla = tuple(generador.valor(tabla, c, i) for c in clave)
         if any(v is None or v is _AUTO for v in tupla):
             continue
+        # Si ya se ha visto una tupla con los mismos valores, se devuelve como primera tupla en la que se repiten valores.
         if tupla in vistas:
             return i
         vistas.add(tupla)
@@ -302,6 +325,7 @@ def _errores_claves(generador: Generador, claves: dict[str, list[tuple[str, ...]
     for t, claves_tabla in claves.items():
         for clave in claves_tabla:
             i = _primera_repetida(generador, t, clave, filas[t])
+            # Si una una PK o UNQ repetida --> Error.
             if i is not None:
                 errores.append(ErrorDdl(
                     f"La clave única ({', '.join(clave)}) de «{t}» repetiría valores a partir de la fila {i + 1}: "
@@ -309,9 +333,18 @@ def _errores_claves(generador: Generador, claves: dict[str, list[tuple[str, ...]
     return errores
 
 
-def generar_prototipo(sentencias: tuple[ast.RawStmt, ...], dependencias: Dependencias,
-                      filas: dict[str, int]) -> Prototipo:
-    """Comprueba el prototipo (número de filas por tabla) y devuelve una muestra de cada tabla."""
+@dataclass(frozen=True)
+class Preparacion:
+    """Lo que necesitan el prototipo (paso 3) y la inserción (paso 6): el mismo generador para los dos."""
+    orden: list[str] = field(default_factory=list)  # Tablas en el orden de Kahn.
+    columnas: dict[str, list[Columna]] = field(default_factory=dict) # Columnas de cada tabla.
+    generador: Generador | None = None  # None si hay avisos de coherencia.
+    errores: list[ErrorDdl] = field(default_factory=list)
+
+
+def preparar_generador(sentencias: tuple[ast.RawStmt, ...], dependencias: Dependencias,
+                       filas: dict[str, int]) -> Preparacion:
+    """Lee las columnas de cada tabla, comprueba los avisos de coherencia y crea el generador."""
     # Asocia el nombre de cada tabla con su CREATE TABLE.
     creates = {nombre_tabla(r.stmt.relation): r.stmt for r in sentencias}
     # Lee las columnas en el orden topológico de dependencias.
@@ -321,24 +354,34 @@ def generar_prototipo(sentencias: tuple[ast.RawStmt, ...], dependencias: Depende
         columnas[t], claves[t], pks[t] = leer_columnas(creates[t])
 
     # Aviso de coherencia: cada comprobación se hace solo si las anteriores han ido bien.
-    errores = _errores_filas(filas, orden) # Número de filas.
+    errores = _errores_filas(filas, orden) # Número de filas incorrecto.
     if not errores:
         # Tipos que no se saben rellenar o FK apunta hacia tablas vacías.
         errores = _errores_tipos(columnas, dependencias) + _errores_fks(columnas, dependencias, filas)
     if errores:
-        return Prototipo(errores=errores)
+        return Preparacion(orden, columnas, errores=errores)
     generador = Generador(dependencias, columnas, pks, filas)
     errores = _errores_claves(generador, claves, filas) # Claves repetidas.
     if errores:
-        return Prototipo(errores=errores)
+        return Preparacion(orden, columnas, errores=errores)
+    return Preparacion(orden, columnas, generador)
+
+
+def generar_prototipo(sentencias: tuple[ast.RawStmt, ...], dependencias: Dependencias,
+                      filas: dict[str, int]) -> Prototipo:
+    """Comprueba el prototipo (número de filas por tabla) y devuelve una muestra de cada tabla."""
+    preparacion = preparar_generador(sentencias, dependencias, filas)
+    if not preparacion.generador:
+        return Prototipo(errores=preparacion.errores)
+    orden, columnas, generador = preparacion.orden, preparacion.columnas, preparacion.generador
 
     # Se prepara la TablaPrototipo con el origen de cada columna y se muestran sus FILAS_MUESTRA
-    fk_de = {(fk.tabla, c) for fk in dependencias.claves_foraneas for c in fk.columnas}
+    fk_de = {(fk.tabla, c) for fk in dependencias.claves_foraneas for c in fk.columnas} # Qué columnas son FK o parte de una FK. (Tabla,Columna)
     tablas = []
     for t in orden:
-        nombres = [c.nombre for c in columnas[t]]
-        origenes = ["fk" if (t, c.nombre) in fk_de else "auto" if c.autogenerada else "tipo" for c in columnas[t]]
+        nombres = [c.nombre for c in columnas[t]] # Lista de nombres de la columna.
+        origenes = ["fk" if (t, c.nombre) in fk_de else "auto" if c.autogenerada else "tipo" for c in columnas[t]] # Cómo se obtiene su valor.
         muestra = [[_formatear(generador.mostrar(t, c, i)) for c in nombres]
-                   for i in range(min(filas[t], FILAS_MUESTRA))]
+                   for i in range(min(filas[t], FILAS_MUESTRA))] # Muestra de FILAS_MUESTRA.
         tablas.append(TablaPrototipo(t, filas[t], columnas[t], origenes, muestra))
     return Prototipo(tablas=tablas)
