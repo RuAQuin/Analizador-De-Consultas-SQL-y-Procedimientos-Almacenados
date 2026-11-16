@@ -46,6 +46,11 @@ public class ApiPythonClient {
         return post("/bbdd/crear", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), CreacionBbdd.class);
     }
 
+    // Paso 6 del módulo 1: inserta los datos del prototipo en la BBDD creada en el paso 5.
+    public InsercionDatos insertarDatos(String nombre, String ddl, Map<String, Integer> filas) {
+        return post("/bbdd/insertar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), InsercionDatos.class);
+    }
+
     // Envía una petición POST a la API Python y devuelve la respuesta parseada como tipo T.
     private <T> T post(String ruta, Object cuerpo, Class<T> tipo) {
         try {

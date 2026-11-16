@@ -4,6 +4,7 @@ import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
 import es.tfg.sqlanalyzer.api.ApiPythonClient;
 import es.tfg.sqlanalyzer.api.CreacionBbdd;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
+import es.tfg.sqlanalyzer.api.InsercionDatos;
 import es.tfg.sqlanalyzer.api.PrototipoDatos;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
@@ -27,7 +28,7 @@ import java.util.Map;
 
 /**
  * Módulo 1: generación de BBDD.
- * El estado del módulo (DDL validado, filas, prototipo y BBDD creada) se guarda en la sesión para
+ * El estado del módulo (DDL validado, filas, prototipo, BBDD creada y datos insertados) se guarda en la sesión para
  * poder avanzar paso a paso: la API Python no guarda nada entre peticiones.
  */
 @Controller
@@ -39,6 +40,7 @@ public class BbddController {
     static final String SESION_FILAS = "bbdd.filas";
     static final String SESION_PROTOTIPO = "bbdd.prototipo";
     static final String SESION_CREACION = "bbdd.creacion";
+    static final String SESION_INSERCION = "bbdd.insercion";
     // Filas que se proponen por defecto para cada tabla.
     static final int FILAS_POR_DEFECTO = 10;
 
@@ -214,6 +216,52 @@ public class BbddController {
         return "redirect:/bbdd#creacion";
     }
 
+    @PostMapping("/insertar")
+    // Paso 6: la API genera las tuplas siguiendo el diagrama (árbol a árbol y en profundidad) y las escribe
+    // tabla a tabla en el orden de Kahn en la BBDD creada en el paso 5. Si una fila falla, no se inserta nada.
+    public String insertarDatos(Model model, HttpSession sesion, RedirectAttributes ra) {
+        CreacionBbddForm form = (CreacionBbddForm) sesion.getAttribute(SESION_FORM);
+        @SuppressWarnings("unchecked")
+        Map<String, String> filas = (Map<String, String>) sesion.getAttribute(SESION_FILAS);
+
+        // Comprobamos que la BBDD esté creada (paso 5) y que no se hayan insertado ya los datos.
+        if (form == null || filas == null || sesion.getAttribute(SESION_CREACION) == null) {
+            ra.addFlashAttribute("error", "Primero crea la base de datos.");
+            return "redirect:/bbdd";
+        }
+        // Comprobamos que no se hayan insertado ya los datos.
+        InsercionDatos anterior = (InsercionDatos) sesion.getAttribute(SESION_INSERCION);
+        if (anterior != null) {
+            ra.addFlashAttribute("error", "Los datos de «" + anterior.bbdd() + "» ya están insertados."
+                    + " Para empezar otra, valida un DDL nuevo.");
+            return "redirect:/bbdd";
+        }
+
+        List<String> errores = new ArrayList<>();
+        InsercionDatos insercion = null;
+        // Paso 6: la API genera las tuplas y las inserta en la BBDD creada en el paso 5; si algo falla, no deja nada insertado.
+        try {
+            insercion = api.insertarDatos(form.getNombreBbdd(), form.getDefinicionTablas(), numeros(filas, errores));
+            insercion.errores().forEach(e -> errores.add(e.descripcion()));
+        } catch (ApiNoDisponibleException e) {
+            model.addAttribute("error", e.getMessage());
+        }
+
+        // Si algo falla (por ejemplo, una fila que incumple un CHECK), se muestra el aviso y se puede reintentar.
+        if (insercion == null || !insercion.valido()) {
+            model.addAttribute("form", form);
+            model.addAttribute("erroresInsercion", errores);
+            rellenarModelo(model, sesion);
+            return "bbdd";
+        }
+
+        // Guardamos en la sesión los datos insertados y mostramos el aviso.
+        sesion.setAttribute(SESION_INSERCION, insercion);
+        ra.addFlashAttribute("aviso", "Se han insertado " + insercion.totalFilas() + " filas en «" + insercion.bbdd()
+                + "» (" + insercion.segundos() + " s).");
+        return "redirect:/bbdd#insercion";
+    }
+
     // Convierte las filas escritas en números; si alguna no lo es, añade el error.
     private static Map<String, Integer> numeros(Map<String, String> escritas, List<String> errores) {
         Map<String, Integer> filas = new LinkedHashMap<>();
@@ -265,6 +313,8 @@ public class BbddController {
         model.addAttribute("prototipo", sesion.getAttribute(SESION_PROTOTIPO));
         // Pasos 4 y 5.
         model.addAttribute("creacion", sesion.getAttribute(SESION_CREACION));
+        // Paso 6.
+        model.addAttribute("insercion", sesion.getAttribute(SESION_INSERCION));
     }
 
     private void limpiarSesion(HttpSession sesion) {
@@ -273,5 +323,6 @@ public class BbddController {
         sesion.removeAttribute(SESION_FILAS);
         sesion.removeAttribute(SESION_PROTOTIPO);
         sesion.removeAttribute(SESION_CREACION);
+        sesion.removeAttribute(SESION_INSERCION);
     }
 }

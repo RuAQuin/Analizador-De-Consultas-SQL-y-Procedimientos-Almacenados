@@ -46,7 +46,7 @@
                     <li class="step-sub" th:classappend="${ordenCarga != null} ? 'step-done'"><span class="step-dot"></span>Kahn entre árboles</li>
                     <li th:classappend="${prototipo != null} ? 'step-done'"><span class="step-dot"></span>Prototipo de datos</li>
                     <li th:classappend="${creacion != null} ? 'step-done'"><span class="step-dot"></span>Revisión y confirmación · CREATE DATABASE / CREATE TABLE</li>
-                    <li><span class="step-dot"></span>Inserción de datos</li>
+                    <li th:classappend="${insercion != null} ? 'step-done'"><span class="step-dot"></span>Inserción de datos</li>
                     <li><span class="step-dot"></span>ANALYZE</li>
                     <li><span class="step-dot"></span>pg_dump y registro</li>
                 </ol>
@@ -224,6 +224,52 @@
                     </tbody>
                 </table>
                 <p class="muted">Para crear otra base de datos, valida un DDL nuevo.</p>
+            </div>
+        </section>
+
+        <section class="panel panel-ancho" id="insercion" th:if="${creacion != null}">
+            <h2 class="panel-title">6. Inserción de datos</h2>
+
+            <div class="alert alert-error" role="alert"
+                 th:if="${erroresInsercion != null and !#lists.isEmpty(erroresInsercion)}">
+                <strong>No se han insertado los datos</strong>
+                <ul class="lista-avisos">
+                    <li th:each="e : ${erroresInsercion}" th:text="${e}">aviso</li>
+                </ul>
+            </div>
+
+            <div th:if="${insercion == null}">
+                <p class="muted">
+                    Se generan las filas del prototipo siguiendo el diagrama: árbol a árbol en el orden de carga y,
+                    dentro de cada árbol, en profundidad (cada fila seguida de sus filas hijas). Después se escriben
+                    tabla a tabla en el orden de Kahn. Si alguna fila falla, no se inserta nada.
+                </p>
+                <form th:action="@{/bbdd/insertar}" method="post">
+                    <button type="submit" class="btn btn-primary"
+                            th:text="|Insertar ${#aggregates.sum(prototipo.tablas.![filas])} filas|">Insertar las filas</button>
+                </form>
+            </div>
+
+            <div th:if="${insercion != null}">
+                <p>
+                    <strong th:text="${insercion.totalFilas()}">9</strong> filas insertadas en
+                    <strong class="code" th:text="${insercion.bbdd}">tienda_demo</strong>
+                    <span class="muted" th:text="|(${insercion.segundos} s)|">(0.1 s)</span>.
+                </p>
+                <table class="table">
+                    <thead><tr><th>#</th><th>Tabla</th><th>Filas insertadas</th></tr></thead>
+                    <tbody>
+                        <tr th:each="t, it : ${insercion.tablas}">
+                            <td th:text="${it.count}">1</td>
+                            <td class="code" th:text="${t.tabla}">clientes</td>
+                            <td th:text="${t.filas}">3</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="muted">
+                    Puedes comprobarlo con
+                    <span class="code" th:text="|docker exec -it sqlanalyzer-postgres psql -U postgres -d ${insercion.bbdd} -c &quot;SELECT count(*) FROM ${insercion.tablas[0].tabla}&quot;|">psql</span>
+                </p>
             </div>
         </section>
     </main>

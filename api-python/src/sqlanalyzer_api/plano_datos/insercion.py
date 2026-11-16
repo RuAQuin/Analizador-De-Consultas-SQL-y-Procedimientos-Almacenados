@@ -7,39 +7,48 @@ Se divide en tres pasos:
 - 6.2. Generar las tuplas de cada árbol en profundidad (bucles interiores): «Generamos tupla»
   (id = contador + 1) → «¿La tupla tiene hijos?» → «Generamos tupla en la tabla hija» → «¿Quedan tuplas
   por construir?» → «¿Existe tabla padre?». HECHO: ``generar_tuplas`` y ``generar_carga``.
-- 6.3. Escribir las tuplas en PostgreSQL. PENDIENTE.
+- 6.3. Escribir las tuplas en PostgreSQL. HECHO: ``insertar_datos``.
 
 Las tuplas salen del mismo ``Generador`` que la vista previa del paso 3, así que lo insertado coincide con
 lo que el usuario ha confirmado. Como la FK de agrupación reparte las hijas en bloques consecutivos,
 el recorrido en profundidad genera cada tabla en orden: la tupla de la fila i tiene id = contador + 1.
 
-Mientras 6.3 no esté hecho, no se inserta nada: la BBDD creada en el paso 5 queda con las tablas vacías.
-Al implementarlo hay que tener en cuenta (marcado con PENDIENTE 6.3 en el código):
+El 6.3 escribe las tuplas tabla a tabla en el orden de Kahn (paso 2.1), no en el orden en que se generan:
+el orden de carga solo ordena los árboles ENTRE sí, y una FK que no es de agrupación entre dos tablas del
+mismo árbol (envios → direcciones, las dos en el árbol de clientes) podría apuntar a una tupla aún no
+insertada. Los valores no cambian (solo dependen del número de fila) y dentro de cada tabla se mantiene el
+orden del diagrama (id 1, 2, 3...).
 
-- PENDIENTE 6.3 · FK dentro del mismo árbol: el orden de carga solo garantiza el orden ENTRE árboles.
-  Una FK que no es de agrupación entre dos tablas del mismo árbol (envios → direcciones, las dos en el
-  árbol de clientes) apunta a una tupla que el recorrido en profundidad puede no haber generado aún. Su
-  valor ya es correcto (se calcula con el número de fila), pero hay que insertar tabla a tabla en el
-  orden de Kahn (paso 2.1) aunque las tuplas se generen en profundidad.
-- PENDIENTE 6.3 · Columnas serial/IDENTITY: el 6.2 les da valor (id = contador + 1) para que las FK
-  cuadren. Al insertar, con GENERATED ALWAYS hay que usar OVERRIDING SYSTEM VALUE, y al final ajustar
-  la secuencia (setval) para que los siguientes INSERT del usuario no repitan ids.
-- PENDIENTE 6.3 · Valores ``AUTO`` (DEFAULT que no es un número, columnas GENERATED ... STORED): se dejan
-  fuera del INSERT para que los rellene PostgreSQL.
-- PENDIENTE 6.3 · Fallos de PostgreSQL al insertar (CHECK, tipos fuera de rango, triggers...): la
-  carga debe ir en una transacción y deshacerse entera, indicando la tabla y la fila.
-- PENDIENTE 6.3 · Tarea larga: con muchas filas, la inserción debe ir por lotes y en un worker
-  asíncrono (según el esquema funcional) para que la WebApp no espere bloqueada.
+- Se escribe con COPY (mucho más rápido que un INSERT por fila), que además acepta valores en las columnas
+  GENERATED ALWAYS AS IDENTITY (como OVERRIDING SYSTEM VALUE).
+- Las columnas ``AUTO`` (DEFAULT que no es un número, GENERATED ... STORED) se dejan fuera: las rellena
+  PostgreSQL.
+- Al final se ajustan las secuencias de serial/IDENTITY (setval) para que los siguientes INSERT del
+  usuario no repitan ids.
+- Todo va en una transacción: si una fila falla (CHECK, trigger...) no se inserta nada y el error dice
+  la tabla y la fila.
+- PENDIENTE: la inserción es síncrona. El esquema funcional prevé workers asíncronos para tareas largas;
+  con el límite de 100.000 filas por tabla y COPY tarda segundos, pero con muchas tablas grandes
+  convendría pasarla a un worker con progreso.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import re
+import time
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 
+import psycopg
+from pglast import ast
+from psycopg import sql
+
 from .arboles import Arbol
+from .creacion import Conexion, revisar_nombre
+from .ddl import ErrorDdl
+from .dependencias import Dependencias
 from .orden_arboles import ArbolOrdenado, OrdenArboles
-from .prototipo import AUTO, Generador
+from .prototipo import AUTO, Generador, preparar_generador
 
 
 @dataclass
@@ -88,8 +97,8 @@ def recorrer_arboles(arboles: list[Arbol], orden_carga: OrdenArboles) -> Iterato
         if pendientes:
             raise ValueError(f"El árbol «{ordenado.raiz}» depende de árboles sin cargar: {', '.join(pendientes)}")
 
-        # Quien recibe el árbol genera sus tuplas en profundidad (paso 6.2, generar_tuplas).
-        # PENDIENTE 6.3: y las escribe en la BBDD creada en el paso 5.
+        # Quien recibe el árbol genera sus tuplas en profundidad (paso 6.2, generar_tuplas)
+        # y el paso 6.3 las escribe en la BBDD creada en el paso 5 (insertar_datos).
         yield ArbolACargar(posicion, por_raiz[ordenado.raiz], ordenado, estado) # Se entrega el Arbol a cargar.
         estado.cargados.append(ordenado.raiz) # Cuando se pide el siguiente árbol, el árbol anterior se da por cargado.
 
@@ -105,7 +114,7 @@ class Tupla:
     columnas: tuple[str, ...]
     valores: tuple
 
-  # ID de la fila
+    # ID de la fila
     @property
     def id(self) -> int:
         return self.fila + 1
@@ -120,7 +129,7 @@ def generar_tuplas(a_cargar: ArbolACargar, generador: Generador) -> Iterator[Tup
     """
     arbol, contadores = a_cargar.arbol, a_cargar.estado.contadores
     hijas: dict[str, list[str]] = {n.tabla: [] for n in arbol.nodos}
-    # Va desde la tabla raíz a cada una de sus tablas hijas.
+    # Relaciona cada tabla del árbol con sus hijas.
     for n in arbol.nodos:
         if n.padre:
             hijas[n.padre].append(n.tabla)
@@ -129,7 +138,7 @@ def generar_tuplas(a_cargar: ArbolACargar, generador: Generador) -> Iterator[Tup
         # «Generamos tupla» (id = contador + 1): el reparto en bloques hace que la fila sea el contador, sino esto no se cumple --> ERROR.
         if fila != contadores[tabla]:
             raise RuntimeError(f"La tupla {fila + 1} de «{tabla}» no sigue a su contador ({contadores[tabla]})")
-        columnas = tuple(generador.columnas[tabla]) # Tupla con el valor de cada columna.
+        columnas = tuple(generador.columnas[tabla]) # Tupla con el nombre de cada columna.
         yield Tupla(tabla, fila, columnas, tuple(generador.valor(tabla, c, fila) for c in columnas))
         contadores[tabla] += 1
         # «¿La tupla tiene hijos?» → «Generamos tupla en la tabla hija» (y, dentro, sus propias hijas).
@@ -138,7 +147,7 @@ def generar_tuplas(a_cargar: ArbolACargar, generador: Generador) -> Iterator[Tup
                 yield from generar(hija, fila_hija)
         # «¿Quedan tuplas por construir?» No → «¿Existe tabla padre?» Sí: se vuelve a la tupla padre.
 
-  # Genera cada fila de la tabla raíz y, con ella, todo su subárbol.
+    # Genera cada fila de la tabla raíz y, con ella, todo su subárbol.
     for fila in range(generador.filas[arbol.raiz]):
         yield from generar(arbol.raiz, fila)
 
@@ -151,7 +160,7 @@ def generar_tuplas(a_cargar: ArbolACargar, generador: Generador) -> Iterator[Tup
 
     # «¿Último árbol?»: antes de pasar al siguiente, cada tabla debe tener todas sus filas.
     for n in arbol.nodos:
-        # Si no coinciden, o faltan o sabran tuplas.
+        # Si no coinciden, o faltan o sobran tuplas.
         if contadores[n.tabla] != generador.filas[n.tabla]:
             raise RuntimeError(f"«{n.tabla}» tiene {contadores[n.tabla]} tuplas generadas de {generador.filas[n.tabla]}")
 
@@ -160,7 +169,167 @@ def generar_carga(arboles: list[Arbol], orden_carga: OrdenArboles, generador: Ge
     """Pasos 6.1 y 6.2 juntos: todas las tuplas de la carga, árbol a árbol y en profundidad."""
     for a_cargar in recorrer_arboles(arboles, orden_carga):
         yield from generar_tuplas(a_cargar, generador)
-        # PENDIENTE 6.3: escribir las tuplas en la BBDD, tabla a tabla en el orden de Kahn.
 
 
-__all__ = ["AUTO", "ArbolACargar", "EstadoCarga", "Tupla", "generar_carga", "generar_tuplas", "recorrer_arboles"]
+# --- Paso 6.3: escribir las tuplas en PostgreSQL ---
+
+@dataclass(frozen=True)
+class Lote:
+    """Tuplas de una tabla listas para escribir (COPY), sin las columnas que rellena PostgreSQL."""
+    tabla: str
+    columnas: tuple[str, ...] # Sin las AUTO.
+    filas: list[tuple] = field(default_factory=list) # Tuplas de valores en ese mismo orden.
+
+
+# Resumen de una tabla escrita (nombre y nº de filas).
+@dataclass(frozen=True)
+class TablaInsertada:
+    tabla: str
+    filas: int
+
+# Resultado de la Inserción
+@dataclass(frozen=True)
+class Insercion:
+    bbdd: str | None = None
+    # En el orden en que se han escrito (Kahn).
+    tablas: list[TablaInsertada] = field(default_factory=list)
+    # Segundos que ha tardado.
+    segundos: float = 0.0
+    # Errores
+    errores: list[ErrorDdl] = field(default_factory=list)
+
+    @property
+    def valido(self) -> bool:
+        return not self.errores
+
+
+def agrupar_por_tabla(tuplas: Iterable[Tupla], orden: list[str]) -> list[Lote]:
+    """Agrupa las tuplas (generadas en profundidad) por tabla, en el orden de Kahn.
+
+    Dentro de cada tabla se mantiene el orden en que se han generado (id 1, 2, 3...).
+    Las columnas ``AUTO`` se quitan: son las mismas en todas las tuplas de una tabla.
+    """
+    columnas: dict[str, tuple[str, ...]] = {} # Nombres.
+    posiciones: dict[str, tuple[int, ...]] = {} # No se guardan los valores AUTO.
+    filas: dict[str, list[tuple]] = {t: [] for t in orden} # Lista (generada vacía) para cada tabla en orden.
+    for t in tuplas:
+        # Primera tupla de cada tabla (solo se entra una vez por tabla).
+        if t.tabla not in posiciones:
+            # Guarda las posiciones de los valores NO AUTO.
+            posiciones[t.tabla] = tuple(i for i, v in enumerate(t.valores) if v is not AUTO) 
+            # Guarda el nombre de las columnas.
+            columnas[t.tabla] = tuple(t.columnas[i] for i in posiciones[t.tabla])
+        # Añade cada tupla (Exceptuando las columnas AUTO)
+        filas[t.tabla].append(tuple(t.valores[i] for i in posiciones[t.tabla]))
+    return [Lote(t, columnas.get(t, ()), filas[t]) for t in orden]
+
+
+def _identificador(tabla: str) -> sql.Identifier:
+    """«ventas.clientes» → "ventas"."clientes"."""
+    return sql.Identifier(*tabla.split(".", 1))
+
+
+class _FalloFila(Exception):
+    """Una fila no se ha podido escribir: se guardan la tabla y el error para indicarlos."""
+
+    def __init__(self, tabla: str, error: psycopg.Error):
+        super().__init__(tabla)
+        self.tabla = tabla
+        self.error = error
+
+
+def _escribir(c: psycopg.Connection, lote: Lote) -> None:
+    """Escribe las tuplas de una tabla con COPY (o con sus DEFAULT si todas sus columnas son AUTO)."""
+    tabla = _identificador(lote.tabla)
+    try:
+        if not lote.columnas:
+            # Ninguna columna que escribir (TODAS AUTO): cada fila toma los DEFAULT de PostgreSQL.
+            c.execute(sql.SQL("INSERT INTO {} SELECT FROM generate_series(1, %s)").format(tabla), (len(lote.filas),))
+            return
+        # Usamos COPY en lugar de INSERT para que la inserción sea mucho más rápida.
+        copia = sql.SQL("COPY {} ({}) FROM STDIN").format(tabla, sql.SQL(", ").join(map(sql.Identifier, lote.columnas)))
+        with c.cursor() as cur, cur.copy(copia) as copy:
+            for fila in lote.filas:
+                copy.write_row(fila) # Escritura de filas.
+    # En el momento en el que haya un error, no se inserta ninguna tupla en la tabla (pasado o futura) durante este COMMIT.
+    except psycopg.Error as e:
+        raise _FalloFila(lote.tabla, e) from e
+
+
+def _ajustar_secuencias(c: psycopg.Connection, lote: Lote, generador: Generador) -> None:
+    """Columnas autogeneradas (serial e IDENTITY): la secuencia sigue al id más alto insertado (si la columna no tiene, no hace nada (devuelve NULL))."""
+    for nombre in lote.columnas:
+        if not generador.columnas[lote.tabla][nombre].autogenerada:
+            continue
+        tabla = _identificador(lote.tabla)
+        # Se selecciona el max() + 1.
+        c.execute(sql.SQL("SELECT setval(pg_get_serial_sequence(%s, %s), max({})) FROM {}").format(
+            sql.Identifier(nombre), tabla), (tabla.as_string(c), nombre))
+
+
+def _mensaje_fila(e: _FalloFila) -> str:
+    """Mensaje de PostgreSQL con la fila que ha fallado (COPY la indica en el contexto: «line N»)."""
+    diag = e.error.diag
+    linea = re.search(r"line (\d+)", diag.context or "")
+    donde = f"la fila {linea.group(1)} de «{e.tabla}»" if linea else f"las filas de «{e.tabla}»"
+    mensaje = diag.message_primary or str(e.error).strip().splitlines()[0]
+    return f"PostgreSQL no ha podido insertar {donde}: {mensaje}. No se ha insertado ningún dato"
+
+
+def _tablas_con_filas(c: psycopg.Connection, orden: list[str]) -> list[str]:
+    """Devuelve las tablas que ya tienen datos (filas)"""
+    return [t for t in orden
+            if c.execute(sql.SQL("SELECT EXISTS (SELECT 1 FROM {})").format(_identificador(t))).fetchone()[0]]
+
+
+def insertar_datos(nombre: str, sentencias: tuple[ast.RawStmt, ...], dependencias: Dependencias,
+                   arboles: list[Arbol], orden_carga: OrdenArboles, filas: dict[str, int],
+                   conexion: Conexion) -> Insercion:
+    """Paso 6 completo: genera las tuplas siguiendo el diagrama (6.1 y 6.2) y las escribe tabla a tabla
+    en el orden de Kahn (6.3), en una sola transacción, en la BBDD creada en el paso 5."""
+    # Validación del nombre de la BBDD.
+    errores = revisar_nombre(nombre, conexion)
+    if errores:
+        return Insercion(errores=errores)
+    # Construcción del Generador a partir del DDL, dependencias y nº de filas. Devuelve también el orden de Kahn.
+    preparacion = preparar_generador(sentencias, dependencias, filas)
+    if not preparacion.generador:
+        return Insercion(errores=preparacion.errores)
+    generador = preparacion.generador
+
+    inicio = time.perf_counter() # Hora de inicio.
+    # Generación de todas las tuplas y se ordenación por lotes.
+    lotes = agrupar_por_tabla(generar_carga(arboles, orden_carga, generador), preparacion.orden)
+    try:
+        # Una sola transacción: al salir del with se confirma, o se deshace si hay una excepción.
+        with conexion.conectar(nombre) as c:
+            ocupadas = _tablas_con_filas(c, preparacion.orden)
+            # Si alguna tabla ya tiene filas --> No se realiza la inserción.
+            if ocupadas:
+                return Insercion(errores=[ErrorDdl(
+                    f"La tabla «{ocupadas[0]}» de «{nombre}» ya tiene filas: los datos solo se insertan una vez,"
+                    " en la base de datos recién creada")])
+            # Por cada lote con filas, se escribe y se ajustan secuencias.
+            for lote in lotes:
+                if lote.filas:
+                    _escribir(c, lote)
+                    _ajustar_secuencias(c, lote, generador)
+    # Mensaje con la Fila y Tabla.
+    except _FalloFila as e:
+        return Insercion(errores=[ErrorDdl(_mensaje_fila(e))])
+    # Fallo de conexión.
+    except psycopg.OperationalError as e:
+        diag = getattr(e, "diag", None)
+        detalle = diag.message_primary if diag and diag.message_primary else str(e).strip().splitlines()[-1]
+        return Insercion(errores=[ErrorDdl(f"No se ha podido conectar con la base de datos «{nombre}»: {detalle}")])
+    # Error genérico.
+    except psycopg.Error as e:
+        return Insercion(errores=[ErrorDdl(f"No se han podido insertar los datos: {e.diag.message_primary or e}."
+                                           " No se ha insertado ningún dato")])
+    # Resultado de la inserción.
+    return Insercion(bbdd=nombre, tablas=[TablaInsertada(lo.tabla, len(lo.filas)) for lo in lotes],
+                     segundos=round(time.perf_counter() - inicio, 2))
+
+
+__all__ = ["AUTO", "ArbolACargar", "EstadoCarga", "Insercion", "Lote", "TablaInsertada", "Tupla",
+           "agrupar_por_tabla", "generar_carga", "generar_tuplas", "insertar_datos", "recorrer_arboles"]

@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
 from .plano_datos import (Conexion, analizar_dependencias, crear_bbdd, formar_arboles, generar_prototipo,
-                          ordenar_arboles, parsear_ddl)
+                          insertar_datos, ordenar_arboles, parsear_ddl)
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
@@ -122,6 +122,22 @@ class RespuestaCreacion(BaseModel):
     tablas: list[TablaCreadaDto] = []
 
 
+class TablaInsertadaDto(BaseModel):
+    tabla: str
+    filas: int
+
+
+# InsercionDatos.
+class RespuestaInsercion(BaseModel):
+    valido: bool
+    errores: list[ErrorDdlDto]
+    bbdd: str | None = None
+    # En el orden en que se han escrito (Kahn).
+    tablas: list[TablaInsertadaDto] = []
+    # Tiempo de la generación y la escritura.
+    segundos: float = 0.0
+
+
 def conexion() -> Conexion:
     """Conexión con PostgreSQL (los tests la sustituyen)."""
     return Conexion.desde_entorno()
@@ -185,6 +201,29 @@ def crear(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> Resp
         bbdd=creacion.bbdd,
         esquemas=creacion.esquemas,
         tablas=[TablaCreadaDto(tabla=t.tabla, sentencia=t.sentencia) for t in creacion.tablas],
+    )
+
+
+@app.post("/bbdd/insertar", response_model=RespuestaInsercion)
+def insertar(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> RespuestaInsercion:
+    """Paso 6: genera las tuplas siguiendo el diagrama (árbol a árbol y en profundidad) y las escribe
+    tabla a tabla en el orden de Kahn en la BBDD creada en el paso 5.
+
+    Recibe lo mismo que /bbdd/crear. Antes se vuelven a comprobar el DDL y el prototipo.
+    """
+    respuesta, resultado, dependencias = _analizar_ddl(peticion.ddl)
+    if not respuesta.valido:
+        return RespuestaInsercion(valido=False, errores=respuesta.errores)
+    arboles = formar_arboles(dependencias)
+    orden_carga = ordenar_arboles(dependencias, arboles, peticion.ddl)
+    insercion = insertar_datos(peticion.nombre, resultado.sentencias, dependencias, arboles, orden_carga,
+                               peticion.filas, con)
+    return RespuestaInsercion(
+        valido=insercion.valido,
+        errores=_errores(insercion.errores),
+        bbdd=insercion.bbdd,
+        tablas=[TablaInsertadaDto(tabla=t.tabla, filas=t.filas) for t in insercion.tablas],
+        segundos=insercion.segundos,
     )
 
 

@@ -8,10 +8,12 @@ import es.tfg.sqlanalyzer.api.ClaveForanea;
 import es.tfg.sqlanalyzer.api.ColumnaPrototipo;
 import es.tfg.sqlanalyzer.api.CreacionBbdd;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
+import es.tfg.sqlanalyzer.api.InsercionDatos;
 import es.tfg.sqlanalyzer.api.NodoArbol;
 import es.tfg.sqlanalyzer.api.PrototipoDatos;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
 import es.tfg.sqlanalyzer.api.TablaCreada;
+import es.tfg.sqlanalyzer.api.TablaInsertada;
 import es.tfg.sqlanalyzer.api.TablaPrototipo;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
 import org.junit.jupiter.api.Test;
@@ -397,5 +399,91 @@ class BbddTests {
            .andExpect(redirectedUrl("/bbdd"))
            .andExpect(flash().attribute("error", containsString("ya está creada")));
         verify(api, times(1)).crearBbdd(anyString(), anyString(), anyMap());
+    }
+
+    // --- Paso 6: inserción de datos ---
+
+    // Valida el DDL, genera el prototipo y crea la BBDD: devuelve la sesión lista para insertar.
+    private MockHttpSession conBbddCreada() throws Exception {
+        var sesion = conPrototipo();
+        when(api.crearBbdd("tienda", DDL, FILAS)).thenReturn(creada());
+        mvc.perform(post("/bbdd/crear").with(csrf()).session(sesion)).andExpect(redirectedUrl("/bbdd#creacion"));
+        return sesion;
+    }
+
+    private static InsercionDatos insertada() {
+        return new InsercionDatos(true, List.of(), "tienda",
+                List.of(new TablaInsertada("clientes", 3), new TablaInsertada("compras", 6)), 0.12);
+    }
+
+    @Test
+    // Con la BBDD creada aparece el botón para insertar las filas del prototipo.
+    void conLaBbddCreadaSeMuestraElBotonDeInsertar() throws Exception {
+        mvc.perform(get("/bbdd").session(conBbddCreada()))
+           .andExpect(content().string(containsString("6. Inserción de datos")))
+           .andExpect(content().string(containsString("Insertar 9 filas")));
+    }
+
+    @Test
+    // Sin BBDD creada no aparece el botón.
+    void sinBbddNoHayBotonDeInsertar() throws Exception {
+        mvc.perform(get("/bbdd").session(conPrototipo()))
+           .andExpect(content().string(not(containsString("6. Inserción de datos"))));
+    }
+
+    @Test
+    // Al insertar se guarda en la sesión y se muestran las filas de cada tabla.
+    void insertarMuestraLasFilasDeCadaTabla() throws Exception {
+        var sesion = conBbddCreada();
+        var insercion = insertada();
+        when(api.insertarDatos("tienda", DDL, FILAS)).thenReturn(insercion);
+
+        mvc.perform(post("/bbdd/insertar").with(csrf()).session(sesion))
+           .andExpect(redirectedUrl("/bbdd#insercion"))
+           .andExpect(flash().attribute("aviso", containsString("Se han insertado 9 filas en «tienda»")))
+           .andExpect(request().sessionAttribute("bbdd.insercion", insercion));
+
+        mvc.perform(get("/bbdd").session(sesion))
+           .andExpect(content().string(containsString("filas insertadas en")))
+           .andExpect(content().string(containsString("(0.12 s)")))
+           .andExpect(content().string(not(containsString("Insertar 9 filas"))));
+    }
+
+    @Test
+    // Si una fila falla, se avisa y se puede reintentar.
+    void filaQueFallaMuestraElAviso() throws Exception {
+        var sesion = conBbddCreada();
+        when(api.insertarDatos("tienda", DDL, FILAS)).thenReturn(new InsercionDatos(false,
+                List.of(new ErrorDdl("PostgreSQL no ha podido insertar la fila 2 de «compras»: new row violates check constraint", null, null)),
+                null, List.of(), 0));
+
+        mvc.perform(post("/bbdd/insertar").with(csrf()).session(sesion))
+           .andExpect(status().isOk())
+           .andExpect(content().string(containsString("No se han insertado los datos")))
+           .andExpect(content().string(containsString("la fila 2 de «compras»")))
+           .andExpect(content().string(containsString("Insertar 9 filas")))
+           .andExpect(request().sessionAttribute("bbdd.insercion", (Object) null));
+    }
+
+    @Test
+    // Sin BBDD creada no se puede insertar.
+    void insertarSinBbdd() throws Exception {
+        mvc.perform(post("/bbdd/insertar").with(csrf()).session(conPrototipo()))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", "Primero crea la base de datos."));
+        verify(api, never()).insertarDatos(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    // Los datos solo se insertan una vez.
+    void noSeInsertaDosVeces() throws Exception {
+        var sesion = conBbddCreada();
+        when(api.insertarDatos("tienda", DDL, FILAS)).thenReturn(insertada());
+        mvc.perform(post("/bbdd/insertar").with(csrf()).session(sesion)).andExpect(redirectedUrl("/bbdd#insercion"));
+
+        mvc.perform(post("/bbdd/insertar").with(csrf()).session(sesion))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", containsString("ya están insertados")));
+        verify(api, times(1)).insertarDatos(anyString(), anyString(), anyMap());
     }
 }

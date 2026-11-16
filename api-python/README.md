@@ -12,9 +12,9 @@ API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
 | 3. Prototipo de datos (número de filas por tabla) | Hecho |
 | 4. Revisión y confirmación | Hecho (junto con el paso 5) |
 | 5. CREATE DATABASE / CREATE TABLE | Hecho |
-| 6.1. Inserción: recorrer los árboles en orden de carga | Hecho (sin endpoint: lo usarán 6.2 y 6.3) |
-| 6.2. Inserción: generar las tuplas de cada árbol en profundidad | Hecho (sin endpoint: lo usará 6.3) |
-| 6.3. Inserción: escribir las tuplas en PostgreSQL | Pendiente |
+| 6.1. Inserción: recorrer los árboles en orden de carga | Hecho |
+| 6.2. Inserción: generar las tuplas de cada árbol en profundidad | Hecho |
+| 6.3. Inserción: escribir las tuplas en PostgreSQL (tabla a tabla en orden de Kahn) | Hecho |
 | 7. ANALYZE | Pendiente |
 | 8. pg_dump y registro | Pendiente |
 
@@ -44,6 +44,7 @@ uvicorn sqlanalyzer_api.app:app --reload
 | POST | `/bbdd/ddl` | Paso 1: parsea el DDL con pglast. Paso 2.1: lee las FK y ordena las tablas con Kahn. Paso 2.2: forma los árboles de agrupación. Paso 2.3: ordena los árboles con Kahn |
 | POST | `/bbdd/prototipo` | Paso 3: comprueba el número de filas de cada tabla y devuelve una muestra de los datos |
 | POST | `/bbdd/crear` | Pasos 4 y 5: revisa el nombre de la BBDD contra el servidor, la crea y crea sus tablas en el orden de Kahn |
+| POST | `/bbdd/insertar` | Paso 6: genera las tuplas siguiendo el diagrama y las escribe tabla a tabla en el orden de Kahn |
 
 `POST /bbdd/ddl` recibe `{"ddl": "CREATE TABLE ..."}` y siempre responde 200:
 
@@ -182,7 +183,8 @@ docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo            
 | `\c otra_bbdd` | Cambiar de BBDD |
 | `\q` | Salir |
 
-Las tablas están vacías hasta el paso 6 (inserción de datos): `SELECT count(*) FROM clientes;` da 0.
+Las tablas están vacías hasta el paso 6 (inserción de datos): `SELECT count(*) FROM clientes;` da 0
+antes de pulsar "Insertar N filas" y el número de filas indicado después.
 
 Con un cliente gráfico (pgAdmin, DBeaver...): host `localhost`, puerto `5433`, usuario y contraseña
 `postgres`, BBDD `postgres` (desde ella se ven todas las demás).
@@ -216,20 +218,31 @@ docker exec -it sqlanalyzer-postgres psql -U postgres -c "DROP DATABASE tienda_d
     `GENERATED ... STORED` quedan como `AUTO` (las rellenará PostgreSQL).
   - Al terminar cada árbol comprueba que cada tabla tiene todas sus filas.
   - Genera las tuplas una a una, sin guardarlas: 300.000 tuplas (100.000 por tabla) en ~1,5 s.
-  - Todavía no tiene endpoint: no inserta nada.
-- **6.3. Escribir las tuplas en PostgreSQL** (pendiente).
+- **6.3. Escribir las tuplas en PostgreSQL** (hecho): `insertar_datos` y `POST /bbdd/insertar`
+  (recibe lo mismo que `/bbdd/crear`). En la WebApp, el botón "Insertar N filas" aparece tras crear la BBDD.
+  - Las tuplas se generan con 6.1 y 6.2 (orden del diagrama), se agrupan por tabla y se escriben
+    **tabla a tabla en el orden de Kahn** (paso 2.1). El orden de carga solo ordena los árboles entre sí:
+    una FK que no es de agrupación entre dos tablas del mismo árbol (`envios → direcciones`, las dos en el
+    árbol de `clientes`) fallaría si se insertara en el orden en que se generan. Los valores no cambian y
+    dentro de cada tabla se mantiene el orden del diagrama (id 1, 2, 3...).
+  - Se escribe con `COPY`, que también acepta valores en `GENERATED ALWAYS AS IDENTITY`. Las columnas
+    `AUTO` quedan fuera (si una tabla no tiene ninguna otra, cada fila toma sus `DEFAULT`).
+  - Al final se ajustan las secuencias de serial/IDENTITY (`setval`): el siguiente `INSERT` del usuario
+    sigue la numeración.
+  - Todo va en una transacción: si una fila falla (un `CHECK`, que el prototipo no tiene en cuenta, un
+    trigger...) no se inserta nada y el error indica la tabla y la fila. Si alguna tabla ya tiene filas no
+    se inserta (los datos se insertan una vez, en la BBDD recién creada).
+  - 300.000 filas (100.000 por tabla) tardan ~4,5 s.
+  - **Pendiente:** la inserción es síncrona. El esquema funcional prevé workers asíncronos para las tareas
+    largas; con el límite de 100.000 filas por tabla basta, pero con muchas tablas grandes convendría
+    pasarla a un worker con progreso.
 
-Problemas que habrá que resolver en 6.3 (marcados con `PENDIENTE 6.3` en el código):
+```json
+{"nombre": "tienda_demo", "ddl": "CREATE TABLE ...", "filas": {"clientes": 3, "compras": 7}}
 
-| Paso | Problema |
-|------|----------|
-| 6.3 | El orden de carga solo ordena **entre** árboles. Una FK que no es de agrupación entre dos tablas del mismo árbol (`envios → direcciones`, las dos en el árbol de `clientes`) puede apuntar a una tupla aún no generada. Su valor ya es correcto, pero hay que insertar tabla a tabla en el orden de Kahn (paso 2.1). |
-| 6.3 | serial/IDENTITY tienen valor (id = contador + 1): usar `OVERRIDING SYSTEM VALUE` con `GENERATED ALWAYS` y ajustar la secuencia al final (`setval`). |
-| 6.3 | Los valores `AUTO` se dejan fuera del `INSERT`. |
-| 6.3 | Un `INSERT` puede fallar (`CHECK`, triggers...): una sola transacción que se deshace entera e indica la tabla y la fila. |
-| 6.3 | Con muchas filas es una tarea larga: por lotes y en un worker asíncrono. |
-
-Mientras tanto, la BBDD creada en el paso 5 queda con las tablas vacías.
+{"valido": true, "errores": [], "bbdd": "tienda_demo", "segundos": 0.01,
+ "tablas": [{"tabla": "clientes", "filas": 3}, {"tabla": "compras", "filas": 7}]}
+```
 
 ## Tests
 

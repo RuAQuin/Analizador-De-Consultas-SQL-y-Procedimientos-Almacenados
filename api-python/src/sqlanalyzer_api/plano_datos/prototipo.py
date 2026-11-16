@@ -329,8 +329,16 @@ def _errores_claves(generador: Generador, claves: dict[str, list[tuple[str, ...]
             if i is not None:
                 errores.append(ErrorDdl(
                     f"La clave única ({', '.join(clave)}) de «{t}» repetiría valores a partir de la fila {i + 1}: "
-                    f"reduce las filas de «{t}» a {i} como máximo o da más filas a sus tablas padre"))
+                    + _sugerencia(generador, t, clave, i)))
     return errores
+
+
+def _sugerencia(generador: Generador, tabla: str, clave: tuple[str, ...], i: int) -> str:
+    """Cómo evitar la repetición. Si la clave no tiene columnas FK, sus valores solo dependen del
+    número de fila y el máximo es exacto; con FK depende de cómo se repartan las filas entre los padres."""
+    if any(c in fk.columnas for fk in generador.fks[tabla] for c in clave):
+        return f"reduce las filas de «{tabla}» o da más filas a sus tablas padre" # La clave incluye columnas FK. Ej: 3 x 2 < 7.
+    return f"reduce las filas de «{tabla}» a {i} como máximo" # La clave no tiene columnas de FK. Ej: tablas con boolean UNQ.
 
 
 @dataclass(frozen=True)
