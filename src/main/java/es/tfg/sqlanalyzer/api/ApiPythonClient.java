@@ -51,6 +51,11 @@ public class ApiPythonClient {
         return post("/bbdd/insertar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), InsercionDatos.class);
     }
 
+    // Paso 7 del módulo 1: ANALYZE de las tablas para cerrar la carga.
+    public AnalisisBbdd analizarBbdd(String nombre, String ddl, Map<String, Integer> filas) {
+        return post("/bbdd/analizar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), AnalisisBbdd.class);
+    }
+
     // Envía una petición POST a la API Python y devuelve la respuesta parseada como tipo T.
     private <T> T post(String ruta, Object cuerpo, Class<T> tipo) {
         try {

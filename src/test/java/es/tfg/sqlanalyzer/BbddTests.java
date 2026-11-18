@@ -1,5 +1,6 @@
 package es.tfg.sqlanalyzer;
 
+import es.tfg.sqlanalyzer.api.AnalisisBbdd;
 import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
 import es.tfg.sqlanalyzer.api.ApiPythonClient;
 import es.tfg.sqlanalyzer.api.Arbol;
@@ -12,6 +13,7 @@ import es.tfg.sqlanalyzer.api.InsercionDatos;
 import es.tfg.sqlanalyzer.api.NodoArbol;
 import es.tfg.sqlanalyzer.api.PrototipoDatos;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
+import es.tfg.sqlanalyzer.api.TablaAnalizada;
 import es.tfg.sqlanalyzer.api.TablaCreada;
 import es.tfg.sqlanalyzer.api.TablaInsertada;
 import es.tfg.sqlanalyzer.api.TablaPrototipo;
@@ -485,5 +487,93 @@ class BbddTests {
            .andExpect(redirectedUrl("/bbdd"))
            .andExpect(flash().attribute("error", containsString("ya están insertados")));
         verify(api, times(1)).insertarDatos(anyString(), anyString(), anyMap());
+    }
+
+    // --- Paso 7: ANALYZE ---
+
+    // Valida el DDL, genera el prototipo, crea la BBDD e inserta los datos: devuelve la sesión lista para el ANALYZE.
+    private MockHttpSession conDatosInsertados() throws Exception {
+        var sesion = conBbddCreada();
+        when(api.insertarDatos("tienda", DDL, FILAS)).thenReturn(insertada());
+        mvc.perform(post("/bbdd/insertar").with(csrf()).session(sesion)).andExpect(redirectedUrl("/bbdd#insercion"));
+        return sesion;
+    }
+
+    private static AnalisisBbdd analizada() {
+        return new AnalisisBbdd(true, List.of(), "tienda",
+                List.of(new TablaAnalizada("clientes", 3, -1, 3, 1, 1),
+                        new TablaAnalizada("compras", 6, -1, 6, 1, 2)), 0.05);
+    }
+
+    @Test
+    // Con los datos insertados aparece el botón del ANALYZE.
+    void conLosDatosInsertadosSeMuestraElBotonDeAnalyze() throws Exception {
+        mvc.perform(get("/bbdd").session(conDatosInsertados()))
+           .andExpect(content().string(containsString("7. ANALYZE para cerrar la carga")))
+           .andExpect(content().string(containsString("Ejecutar ANALYZE")));
+    }
+
+    @Test
+    // Sin datos insertados no aparece la sección.
+    void sinDatosNoHayAnalyze() throws Exception {
+        mvc.perform(get("/bbdd").session(conBbddCreada()))
+           .andExpect(content().string(not(containsString("7. ANALYZE"))));
+    }
+
+    @Test
+    // Al analizar se guarda en la sesión y se muestran las estadísticas de cada tabla.
+    void analyzeMuestraLasEstadisticasDeCadaTabla() throws Exception {
+        var sesion = conDatosInsertados();
+        var analisis = analizada();
+        when(api.analizarBbdd("tienda", DDL, FILAS)).thenReturn(analisis);
+
+        mvc.perform(post("/bbdd/analizar").with(csrf()).session(sesion))
+           .andExpect(redirectedUrl("/bbdd#analisis"))
+           .andExpect(flash().attribute("aviso", containsString("Se han analizado las 2 tablas de «tienda»")))
+           .andExpect(request().sessionAttribute("bbdd.analisis", analisis));
+
+        mvc.perform(get("/bbdd").session(sesion))
+           .andExpect(content().string(containsString("tablas analizadas en")))
+           .andExpect(content().string(containsString("sin analizar")))
+           .andExpect(content().string(containsString("exacto")))
+           .andExpect(content().string(not(containsString("Ejecutar ANALYZE"))));
+    }
+
+    @Test
+    // Si el ANALYZE falla, se avisa y se puede reintentar.
+    void analyzeQueFallaMuestraElAviso() throws Exception {
+        var sesion = conDatosInsertados();
+        when(api.analizarBbdd("tienda", DDL, FILAS)).thenReturn(new AnalisisBbdd(false,
+                List.of(new ErrorDdl("La tabla «clientes» de «tienda» está vacía: inserta antes los datos (paso 6)", null, null)),
+                null, List.of(), 0));
+
+        mvc.perform(post("/bbdd/analizar").with(csrf()).session(sesion))
+           .andExpect(status().isOk())
+           .andExpect(content().string(containsString("No se han analizado las tablas")))
+           .andExpect(content().string(containsString("está vacía")))
+           .andExpect(content().string(containsString("Ejecutar ANALYZE")))
+           .andExpect(request().sessionAttribute("bbdd.analisis", (Object) null));
+    }
+
+    @Test
+    // Sin datos insertados no se puede analizar.
+    void analyzeSinDatos() throws Exception {
+        mvc.perform(post("/bbdd/analizar").with(csrf()).session(conBbddCreada()))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", "Primero inserta los datos."));
+        verify(api, never()).analizarBbdd(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    // El ANALYZE se hace una vez por carga.
+    void noSeAnalizaDosVeces() throws Exception {
+        var sesion = conDatosInsertados();
+        when(api.analizarBbdd("tienda", DDL, FILAS)).thenReturn(analizada());
+        mvc.perform(post("/bbdd/analizar").with(csrf()).session(sesion)).andExpect(redirectedUrl("/bbdd#analisis"));
+
+        mvc.perform(post("/bbdd/analizar").with(csrf()).session(sesion))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", containsString("ya están analizadas")));
+        verify(api, times(1)).analizarBbdd(anyString(), anyString(), anyMap());
     }
 }

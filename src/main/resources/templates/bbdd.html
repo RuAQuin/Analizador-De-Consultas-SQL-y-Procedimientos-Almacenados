@@ -47,7 +47,7 @@
                     <li th:classappend="${prototipo != null} ? 'step-done'"><span class="step-dot"></span>Prototipo de datos</li>
                     <li th:classappend="${creacion != null} ? 'step-done'"><span class="step-dot"></span>Revisión y confirmación · CREATE DATABASE / CREATE TABLE</li>
                     <li th:classappend="${insercion != null} ? 'step-done'"><span class="step-dot"></span>Inserción de datos</li>
-                    <li><span class="step-dot"></span>ANALYZE</li>
+                    <li th:classappend="${analisis != null} ? 'step-done'"><span class="step-dot"></span>ANALYZE</li>
                     <li><span class="step-dot"></span>pg_dump y registro</li>
                 </ol>
 
@@ -269,6 +269,64 @@
                 <p class="muted">
                     Puedes comprobarlo con
                     <span class="code" th:text="|docker exec -it sqlanalyzer-postgres psql -U postgres -d ${insercion.bbdd} -c &quot;SELECT count(*) FROM ${insercion.tablas[0].tabla}&quot;|">psql</span>
+                </p>
+            </div>
+        </section>
+
+        <section class="panel panel-ancho" id="analisis" th:if="${insercion != null}">
+            <h2 class="panel-title">7. ANALYZE para cerrar la carga</h2>
+
+            <div class="alert alert-error" role="alert"
+                 th:if="${erroresAnalisis != null and !#lists.isEmpty(erroresAnalisis)}">
+                <strong>No se han analizado las tablas</strong>
+                <ul class="lista-avisos">
+                    <li th:each="e : ${erroresAnalisis}" th:text="${e}">aviso</li>
+                </ul>
+            </div>
+
+            <div th:if="${analisis == null}">
+                <p class="muted">
+                    Hasta que no se analizan, PostgreSQL no sabe cuántas filas tiene cada tabla ni cómo se reparten
+                    sus valores, y los planes de EXPLAIN se basarían en estimaciones por defecto. Se ejecuta ANALYZE
+                    sobre cada tabla en el orden de Kahn.
+                </p>
+                <form th:action="@{/bbdd/analizar}" method="post">
+                    <button type="submit" class="btn btn-primary">Ejecutar ANALYZE</button>
+                </form>
+            </div>
+
+            <div th:if="${analisis != null}">
+                <p>
+                    <strong th:text="${#lists.size(analisis.tablas)}">3</strong> tablas analizadas en
+                    <strong class="code" th:text="${analisis.bbdd}">tienda_demo</strong>
+                    <span class="muted" th:text="|(${analisis.segundos} s)|">(0.1 s)</span>.
+                </p>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>#</th><th>Tabla</th><th>Filas insertadas</th><th>Estimadas antes</th>
+                            <th>Estimadas después</th><th>Páginas</th><th>Columnas con estadísticas</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="t, it : ${analisis.tablas}">
+                            <td th:text="${it.count}">1</td>
+                            <td class="code" th:text="${t.tabla}">clientes</td>
+                            <td th:text="${t.filas}">3</td>
+                            <td th:text="${t.estimadasAntes < 0} ? 'sin analizar' : ${t.estimadasAntes}">sin analizar</td>
+                            <td>
+                                <span th:text="${t.estimadas}">3</span>
+                                <span class="etiqueta" th:if="${t.coincide()}">exacto</span>
+                                <span class="muted" th:unless="${t.coincide()}">(estimado por muestreo)</span>
+                            </td>
+                            <td th:text="${t.paginas}">1</td>
+                            <td th:text="${t.columnas}">4</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="muted">
+                    Puedes comprobarlo con
+                    <span class="code" th:text="|docker exec -it sqlanalyzer-postgres psql -U postgres -d ${analisis.bbdd} -c &quot;SELECT relname, reltuples, relpages FROM pg_class WHERE relkind = 'r' AND relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)&quot;|">psql</span>
                 </p>
             </div>
         </section>

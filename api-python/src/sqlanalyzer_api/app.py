@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
-from .plano_datos import (Conexion, analizar_dependencias, crear_bbdd, formar_arboles, generar_prototipo,
-                          insertar_datos, ordenar_arboles, parsear_ddl)
+from .plano_datos import (Conexion, analizar_bbdd, analizar_dependencias, crear_bbdd, formar_arboles,
+                          generar_prototipo, insertar_datos, ordenar_arboles, parsear_ddl)
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
@@ -138,6 +138,30 @@ class RespuestaInsercion(BaseModel):
     segundos: float = 0.0
 
 
+# Lo que sabe PostgreSQL de una tabla antes y después del ANALYZE.
+class TablaAnalizadaDto(BaseModel):
+    tabla: str
+    # Filas pedidas en el prototipo.
+    filas: int
+    # pg_class.reltuples antes (-1: nunca analizada) y después del ANALYZE.
+    estimadas_antes: int
+    estimadas: int
+    # pg_class.relpages.
+    paginas: int
+    # Columnas con estadísticas en pg_stats.
+    columnas: int
+
+
+# AnalisisBbdd.
+class RespuestaAnalisis(BaseModel):
+    valido: bool
+    errores: list[ErrorDdlDto]
+    bbdd: str | None = None
+    # En el orden en que se han analizado (Kahn).
+    tablas: list[TablaAnalizadaDto] = []
+    segundos: float = 0.0
+
+
 def conexion() -> Conexion:
     """Conexión con PostgreSQL (los tests la sustituyen)."""
     return Conexion.desde_entorno()
@@ -224,6 +248,28 @@ def insertar(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> R
         bbdd=insercion.bbdd,
         tablas=[TablaInsertadaDto(tabla=t.tabla, filas=t.filas) for t in insercion.tablas],
         segundos=insercion.segundos,
+    )
+
+
+@app.post("/bbdd/analizar", response_model=RespuestaAnalisis)
+def analizar(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> RespuestaAnalisis:
+    """Paso 7: ANALYZE de cada tabla en el orden de Kahn para cerrar la carga, de modo que el planificador
+    tenga estadísticas reales de los datos insertados en el paso 6.
+
+    Recibe lo mismo que /bbdd/insertar: el DDL da las tablas y las filas, las que debería tener cada una.
+    """
+    respuesta, _, dependencias = _analizar_ddl(peticion.ddl)
+    if not respuesta.valido:
+        return RespuestaAnalisis(valido=False, errores=respuesta.errores)
+    analisis = analizar_bbdd(peticion.nombre, dependencias, peticion.filas, con)
+    return RespuestaAnalisis(
+        valido=analisis.valido,
+        errores=_errores(analisis.errores),
+        bbdd=analisis.bbdd,
+        tablas=[TablaAnalizadaDto(tabla=t.tabla, filas=t.filas, estimadas_antes=t.estimadas_antes,
+                                  estimadas=t.estimadas, paginas=t.paginas, columnas=t.columnas)
+                for t in analisis.tablas],
+        segundos=analisis.segundos,
     )
 
 

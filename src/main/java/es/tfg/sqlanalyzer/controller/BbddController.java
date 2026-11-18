@@ -1,5 +1,6 @@
 package es.tfg.sqlanalyzer.controller;
 
+import es.tfg.sqlanalyzer.api.AnalisisBbdd;
 import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
 import es.tfg.sqlanalyzer.api.ApiPythonClient;
 import es.tfg.sqlanalyzer.api.CreacionBbdd;
@@ -28,7 +29,7 @@ import java.util.Map;
 
 /**
  * Módulo 1: generación de BBDD.
- * El estado del módulo (DDL validado, filas, prototipo, BBDD creada y datos insertados) se guarda en la sesión para
+ * El estado del módulo (DDL validado, filas, prototipo, BBDD creada, datos insertados y ANALYZE) se guarda en la sesión para
  * poder avanzar paso a paso: la API Python no guarda nada entre peticiones.
  */
 @Controller
@@ -41,6 +42,7 @@ public class BbddController {
     static final String SESION_PROTOTIPO = "bbdd.prototipo";
     static final String SESION_CREACION = "bbdd.creacion";
     static final String SESION_INSERCION = "bbdd.insercion";
+    static final String SESION_ANALISIS = "bbdd.analisis";
     // Filas que se proponen por defecto para cada tabla.
     static final int FILAS_POR_DEFECTO = 10;
 
@@ -262,6 +264,51 @@ public class BbddController {
         return "redirect:/bbdd#insercion";
     }
 
+    @PostMapping("/analizar")
+    // Paso 7: ANALYZE para cerrar la carga. La API analiza cada tabla en el orden de Kahn para que el planificador
+    // tenga estadísticas reales de los datos insertados en el paso 6.
+    public String analizarBbdd(Model model, HttpSession sesion, RedirectAttributes ra) {
+        CreacionBbddForm form = (CreacionBbddForm) sesion.getAttribute(SESION_FORM);
+        @SuppressWarnings("unchecked")
+        Map<String, String> filas = (Map<String, String>) sesion.getAttribute(SESION_FILAS);
+
+        // Comprobamos que los datos estén insertados (paso 6).
+        if (form == null || filas == null || sesion.getAttribute(SESION_INSERCION) == null) {
+            ra.addFlashAttribute("error", "Primero inserta los datos.");
+            return "redirect:/bbdd";
+        }
+        // Comprobamos que no se haya hecho ya el ANALYZE (Resultados del anterior ANALYZE = resultados del nuevo ANALYZE).
+        AnalisisBbdd anterior = (AnalisisBbdd) sesion.getAttribute(SESION_ANALISIS);
+        if (anterior != null) {
+            ra.addFlashAttribute("error", "Las tablas de «" + anterior.bbdd() + "» ya están analizadas."
+                    + " Para empezar otra, valida un DDL nuevo.");
+            return "redirect:/bbdd";
+        }
+
+        List<String> errores = new ArrayList<>();
+        AnalisisBbdd analisis = null;
+        try {
+            analisis = api.analizarBbdd(form.getNombreBbdd(), form.getDefinicionTablas(), numeros(filas, errores));
+            analisis.errores().forEach(e -> errores.add(e.descripcion()));
+        } catch (ApiNoDisponibleException e) {
+            model.addAttribute("error", e.getMessage());
+        }
+
+        // Si algo falla (por ejemplo, se ha perdido la conexión), se muestra el aviso y se puede reintentar.
+        if (analisis == null || !analisis.valido()) {
+            model.addAttribute("form", form);
+            model.addAttribute("erroresAnalisis", errores);
+            rellenarModelo(model, sesion);
+            return "bbdd";
+        }
+
+        // Guardamos en la sesión el resultado del ANALYZE y mostramos el aviso.
+        sesion.setAttribute(SESION_ANALISIS, analisis);
+        ra.addFlashAttribute("aviso", "Se han analizado las " + analisis.tablas().size() + " tablas de «"
+                + analisis.bbdd() + "» (" + analisis.segundos() + " s): el planificador ya tiene estadísticas reales.");
+        return "redirect:/bbdd#analisis";
+    }
+
     // Convierte las filas escritas en números; si alguna no lo es, añade el error.
     private static Map<String, Integer> numeros(Map<String, String> escritas, List<String> errores) {
         Map<String, Integer> filas = new LinkedHashMap<>();
@@ -315,6 +362,8 @@ public class BbddController {
         model.addAttribute("creacion", sesion.getAttribute(SESION_CREACION));
         // Paso 6.
         model.addAttribute("insercion", sesion.getAttribute(SESION_INSERCION));
+        // Paso 7.
+        model.addAttribute("analisis", sesion.getAttribute(SESION_ANALISIS));
     }
 
     private void limpiarSesion(HttpSession sesion) {
@@ -324,5 +373,6 @@ public class BbddController {
         sesion.removeAttribute(SESION_PROTOTIPO);
         sesion.removeAttribute(SESION_CREACION);
         sesion.removeAttribute(SESION_INSERCION);
+        sesion.removeAttribute(SESION_ANALISIS);
     }
 }

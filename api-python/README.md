@@ -15,7 +15,7 @@ API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
 | 6.1. Inserción: recorrer los árboles en orden de carga | Hecho |
 | 6.2. Inserción: generar las tuplas de cada árbol en profundidad | Hecho |
 | 6.3. Inserción: escribir las tuplas en PostgreSQL (tabla a tabla en orden de Kahn) | Hecho |
-| 7. ANALYZE | Pendiente |
+| 7. ANALYZE para cerrar la carga | Hecho |
 | 8. pg_dump y registro | Pendiente |
 
 ## Arrancar
@@ -45,6 +45,7 @@ uvicorn sqlanalyzer_api.app:app --reload
 | POST | `/bbdd/prototipo` | Paso 3: comprueba el número de filas de cada tabla y devuelve una muestra de los datos |
 | POST | `/bbdd/crear` | Pasos 4 y 5: revisa el nombre de la BBDD contra el servidor, la crea y crea sus tablas en el orden de Kahn |
 | POST | `/bbdd/insertar` | Paso 6: genera las tuplas siguiendo el diagrama y las escribe tabla a tabla en el orden de Kahn |
+| POST | `/bbdd/analizar` | Paso 7: ANALYZE de cada tabla en el orden de Kahn para cerrar la carga |
 
 `POST /bbdd/ddl` recibe `{"ddl": "CREATE TABLE ..."}` y siempre responde 200:
 
@@ -242,6 +243,37 @@ docker exec -it sqlanalyzer-postgres psql -U postgres -c "DROP DATABASE tienda_d
 
 {"valido": true, "errores": [], "bbdd": "tienda_demo", "segundos": 0.01,
  "tablas": [{"tabla": "clientes", "filas": 3}, {"tabla": "compras", "filas": 7}]}
+```
+
+### ANALYZE para cerrar la carga (paso 7)
+
+`analizar_bbdd` (`plano_datos/estadisticas.py`) y `POST /bbdd/analizar`. La petición es igual que la de
+`/bbdd/insertar`: el DDL da las tablas y `filas` indica cuántas debería tener cada una.
+
+Hasta que no se analiza una tabla, PostgreSQL no sabe cuántas filas tiene (`pg_class.reltuples` = -1) ni
+cómo se reparten sus valores (`pg_stats` vacío). El planificador usaría estimaciones por defecto y los
+EXPLAIN del módulo 2 darían planes engañosos.
+
+- Se ejecuta `ANALYZE` tabla a tabla en el orden de Kahn, solo sobre las tablas del DDL.
+- Antes se comprueba que los datos estén insertados: si una tabla debería tener filas y está vacía, no
+  se analiza nada («inserta antes los datos (paso 6)»).
+- De cada tabla se devuelven las filas estimadas antes y después (`reltuples`), las páginas
+  (`relpages`) y las columnas con estadísticas (`pg_stats`). Con hasta 30.000 filas (la muestra de
+  ANALYZE) la estimación es exacta; con más, sale de una muestra y puede variar un poco.
+- ANALYZE no cambia los datos: se puede repetir sin problema.
+
+```json
+{"valido": true, "errores": [], "bbdd": "tienda_demo", "segundos": 0.03,
+ "tablas": [{"tabla": "clientes", "filas": 1000, "estimadas_antes": -1, "estimadas": 1000, "paginas": 6, "columnas": 3},
+            {"tabla": "pedidos", "filas": 50000, "estimadas_antes": -1, "estimadas": 50000, "paginas": 288, "columnas": 3}]}
+```
+
+Para comprobarlo en PostgreSQL:
+
+```bash
+docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo -c "SELECT relname, reltuples, relpages FROM pg_class WHERE relname IN ('clientes', 'pedidos')"
+docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo -c "SELECT tablename, attname, n_distinct FROM pg_stats WHERE schemaname = 'public'"
+docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo -c "SELECT relname, last_analyze FROM pg_stat_user_tables"
 ```
 
 ## Tests
