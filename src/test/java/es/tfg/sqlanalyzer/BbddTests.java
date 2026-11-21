@@ -3,12 +3,14 @@ package es.tfg.sqlanalyzer;
 import es.tfg.sqlanalyzer.api.AnalisisBbdd;
 import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
 import es.tfg.sqlanalyzer.api.ApiPythonClient;
+import es.tfg.sqlanalyzer.api.BbddRegistrada;
 import es.tfg.sqlanalyzer.api.Arbol;
 import es.tfg.sqlanalyzer.api.ArbolOrdenado;
 import es.tfg.sqlanalyzer.api.ClaveForanea;
 import es.tfg.sqlanalyzer.api.ColumnaPrototipo;
 import es.tfg.sqlanalyzer.api.CreacionBbdd;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
+import es.tfg.sqlanalyzer.api.ExportacionBbdd;
 import es.tfg.sqlanalyzer.api.InsercionDatos;
 import es.tfg.sqlanalyzer.api.NodoArbol;
 import es.tfg.sqlanalyzer.api.PrototipoDatos;
@@ -27,13 +29,19 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -575,5 +583,144 @@ class BbddTests {
            .andExpect(redirectedUrl("/bbdd"))
            .andExpect(flash().attribute("error", containsString("ya están analizadas")));
         verify(api, times(1)).analizarBbdd(anyString(), anyString(), anyMap());
+    }
+
+    // --- Paso 8: pg_dump y registro ---
+
+    private static final String DUMP = "tienda_20261118_101500.dump";
+    private static final OffsetDateTime REGISTRADA = OffsetDateTime.parse("2026-11-18T10:15:00Z");
+
+    // Valida, genera el prototipo, crea, inserta y analiza: devuelve la sesión lista para exportar.
+    private MockHttpSession conAnalyze() throws Exception {
+        var sesion = conDatosInsertados();
+        when(api.analizarBbdd("tienda", DDL, FILAS)).thenReturn(analizada());
+        mvc.perform(post("/bbdd/analizar").with(csrf()).session(sesion)).andExpect(redirectedUrl("/bbdd#analisis"));
+        return sesion;
+    }
+
+    private static ExportacionBbdd exportada() {
+        return new ExportacionBbdd(true, List.of(), "tienda", DUMP, 12_700, REGISTRADA, 0.3);
+    }
+
+    @Test
+    // Con el ANALYZE hecho aparece el botón de exportar.
+    void conAnalyzeSeMuestraElBotonDeExportar() throws Exception {
+        mvc.perform(get("/bbdd").session(conAnalyze()))
+           .andExpect(content().string(containsString("8. pg_dump y registro")))
+           .andExpect(content().string(containsString("Exportar con pg_dump y registrar")));
+    }
+
+    @Test
+    // Sin ANALYZE no aparece la sección.
+    void sinAnalyzeNoHayExportacion() throws Exception {
+        mvc.perform(get("/bbdd").session(conDatosInsertados()))
+           .andExpect(content().string(not(containsString("8. pg_dump y registro"))));
+    }
+
+    @Test
+    // Al exportar se muestra el enlace al script y la lista de BBDD registradas.
+    void exportarMuestraElDumpYElRegistro() throws Exception {
+        var sesion = conAnalyze();
+        var exportacion = exportada();
+        when(api.exportarBbdd("tienda", DDL, FILAS)).thenReturn(exportacion);
+        when(api.listarRegistro()).thenReturn(List.of(
+                new BbddRegistrada("tienda", 2, 9, DUMP, 12_700, REGISTRADA, true),
+                new BbddRegistrada("antigua", 1, 5, "antigua_20261101_090000.sql", 900, REGISTRADA.minusDays(17), false)));
+
+        mvc.perform(post("/bbdd/exportar").with(csrf()).session(sesion))
+           .andExpect(redirectedUrl("/bbdd#exportacion"))
+           .andExpect(flash().attribute("aviso", containsString("Se ha exportado «tienda» en " + DUMP + " (12.4 KB)")))
+           .andExpect(request().sessionAttribute("bbdd.exportacion", exportacion));
+
+        mvc.perform(get("/bbdd").session(sesion))
+           .andExpect(content().string(containsString("href=\"/bbdd/dumps/" + DUMP + "\"")))
+           .andExpect(content().string(containsString("/datos/dumps/" + DUMP)))
+           .andExpect(content().string(containsString("BBDD objetivo registradas")))
+           .andExpect(content().string(containsString("antigua_20261101_090000.sql")))
+           .andExpect(content().string(containsString("900 B")))
+           .andExpect(content().string(containsString("Borrada")))
+           .andExpect(content().string(not(containsString("Exportar con pg_dump y registrar"))));
+    }
+
+    @Test
+    // Si falla, se avisa y se puede reintentar.
+    void exportacionQueFallaMuestraElAviso() throws Exception {
+        var sesion = conAnalyze();
+        when(api.exportarBbdd("tienda", DDL, FILAS)).thenReturn(new ExportacionBbdd(false,
+                List.of(new ErrorDdl("pg_dump no ha podido exportar «tienda»: connection refused", null, null)),
+                null, null, 0, null, 0));
+
+        mvc.perform(post("/bbdd/exportar").with(csrf()).session(sesion))
+           .andExpect(status().isOk())
+           .andExpect(content().string(containsString("No se ha exportado la base de datos")))
+           .andExpect(content().string(containsString("connection refused")))
+           .andExpect(content().string(containsString("Exportar con pg_dump y registrar")))
+           .andExpect(request().sessionAttribute("bbdd.exportacion", (Object) null));
+    }
+
+    @Test
+    // Sin ANALYZE no se puede exportar.
+    void exportarSinAnalyze() throws Exception {
+        mvc.perform(post("/bbdd/exportar").with(csrf()).session(conDatosInsertados()))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", "Primero ejecuta el ANALYZE."));
+        verify(api, never()).exportarBbdd(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    // Se exporta una vez por carga.
+    void noSeExportaDosVeces() throws Exception {
+        var sesion = conAnalyze();
+        when(api.exportarBbdd("tienda", DDL, FILAS)).thenReturn(exportada());
+        mvc.perform(post("/bbdd/exportar").with(csrf()).session(sesion)).andExpect(redirectedUrl("/bbdd#exportacion"));
+
+        mvc.perform(post("/bbdd/exportar").with(csrf()).session(sesion))
+           .andExpect(redirectedUrl("/bbdd"))
+           .andExpect(flash().attribute("error", containsString("ya está exportada y registrada")));
+        verify(api, times(1)).exportarBbdd(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    // La descarga copia el dump que envía la API, como fichero adjunto.
+    void descargaElDump() throws Exception {
+        doAnswer(i -> {
+            i.getArgument(1, OutputStream.class).write("-- PostgreSQL database dump\n".getBytes(StandardCharsets.UTF_8));
+            return true;
+        }).when(api).descargarDump(eq(DUMP), any());
+
+        mvc.perform(get("/bbdd/dumps/" + DUMP))
+           .andExpect(status().isOk())
+           .andExpect(header().string("Content-Disposition", "attachment; filename=\"" + DUMP + "\""))
+           .andExpect(content().contentTypeCompatibleWith("application/octet-stream"))
+           .andExpect(content().string("-- PostgreSQL database dump\n"));
+    }
+
+    @Test
+    // Solo se piden a la API nombres de dump; el resto es 404.
+    void descargaRechazaNombresQueNoSonDumps() throws Exception {
+        mvc.perform(get("/bbdd/dumps/secreto.txt")).andExpect(status().isNotFound());
+        when(api.descargarDump(eq(DUMP), any())).thenReturn(false);
+        mvc.perform(get("/bbdd/dumps/" + DUMP)).andExpect(status().isNotFound());
+        verify(api, times(1)).descargarDump(anyString(), any());
+    }
+
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper json;
+
+    @Test
+    // Las respuestas reales de la API (fechas ISO con microsegundos, snake_case) se leen bien.
+    void leeLasRespuestasDeLaApi() throws Exception {
+        var exportacion = json.readValue("""
+                {"valido": true, "errores": [], "bbdd": "dump_e2e", "fichero": "dump_e2e_20261118_120752.sql",
+                 "bytes": 379899, "registrada": "2026-11-18T12:07:52.595620Z", "segundos": 0.14}""", ExportacionBbdd.class);
+        org.assertj.core.api.Assertions.assertThat(exportacion.registrada().toInstant().toString())
+                .isEqualTo("2026-11-18T12:07:52.595620Z");
+        org.assertj.core.api.Assertions.assertThat(exportacion.tamano()).isEqualTo("371.0 KB");
+
+        var registrada = json.readValue("""
+                {"nombre": "dump_e2e", "tablas": 2, "total_filas": 21000, "fichero": "dump_e2e_20261118_120752.sql",
+                 "bytes": 379899, "registrada": "2026-11-18T12:07:52.595620Z", "existe": true}""", BbddRegistrada.class);
+        org.assertj.core.api.Assertions.assertThat(registrada.totalFilas()).isEqualTo(21000);
+        org.assertj.core.api.Assertions.assertThat(registrada.existe()).isTrue();
     }
 }

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI
+import os
+from datetime import datetime
+from pathlib import Path
+
+import psycopg
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from .plano_datos import (Conexion, analizar_bbdd, analizar_dependencias, crear_bbdd, formar_arboles,
-                          generar_prototipo, insertar_datos, ordenar_arboles, parsear_ddl)
+from .plano_datos import (FICHERO_DUMP, Conexion, analizar_bbdd, analizar_dependencias, crear_bbdd,
+                          directorio_dumps, directorio_dumps_servidor, exportar_bbdd,
+                          formar_arboles, generar_prototipo, insertar_datos,
+                          listar_registro, ordenar_arboles, parsear_ddl)
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
@@ -162,9 +170,44 @@ class RespuestaAnalisis(BaseModel):
     segundos: float = 0.0
 
 
+# ExportacionBbdd.
+class RespuestaExportacion(BaseModel):
+    valido: bool
+    errores: list[ErrorDdlDto]
+    bbdd: str | None = None
+    # Fichero del dump (se descarga con GET /bbdd/dumps/{fichero}) y su tamaño en bytes.
+    fichero: str | None = None
+    bytes: int = 0
+    # Momento del registro en el repositorio.
+    registrada: datetime | None = None
+    segundos: float = 0.0
+
+
+# Una BBDD registrada.
+class BbddRegistradaDto(BaseModel):
+    nombre: str
+    tablas: int
+    total_filas: int
+    fichero: str
+    bytes: int
+    registrada: datetime
+    # Si la BBDD sigue existiendo en el servidor.
+    existe: bool
+
+
 def conexion() -> Conexion:
     """Conexión con PostgreSQL (los tests la sustituyen)."""
     return Conexion.desde_entorno()
+
+
+def dumps() -> Path:
+    """Directorio donde la API lee los dumps para descargarlos (los tests lo sustituyen)."""
+    return directorio_dumps()
+
+
+def dumps_servidor() -> str:
+    """Directorio donde PostgreSQL escribe los dumps, ruta del servidor (los tests lo sustituyen)."""
+    return directorio_dumps_servidor()
 
 
 @app.get("/salud")
@@ -271,6 +314,47 @@ def analizar(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> R
                 for t in analisis.tablas],
         segundos=analisis.segundos,
     )
+
+
+@app.post("/bbdd/exportar", response_model=RespuestaExportacion)
+def exportar(peticion: PeticionCreacion, con: Conexion = Depends(conexion),
+             directorio: str = Depends(dumps_servidor)) -> RespuestaExportacion:
+    """Paso 8: respaldo con COPY (SELECT 1) TO PROGRAM 'pg_dump ... -F c' desde el servidor (8.1) y registro
+    como BBDD objetivo en el repositorio (8.2). La carga debe estar cerrada (paso 7). Llega a Windows al
+    descargarlo con GET /bbdd/dumps/{fichero}.
+
+    Recibe lo mismo que /bbdd/analizar: el DDL y las filas se guardan en el registro.
+    """
+    respuesta, _, dependencias = _analizar_ddl(peticion.ddl)
+    if not respuesta.valido:
+        return RespuestaExportacion(valido=False, errores=respuesta.errores)
+    exportacion = exportar_bbdd(peticion.nombre, peticion.ddl, dependencias, peticion.filas, con, directorio)
+    return RespuestaExportacion(valido=exportacion.valido, errores=_errores(exportacion.errores),
+                                bbdd=exportacion.bbdd, fichero=exportacion.fichero, bytes=exportacion.bytes,
+                                registrada=exportacion.registrada, segundos=exportacion.segundos)
+
+
+@app.get("/bbdd/registro", response_model=list[BbddRegistradaDto])
+def registro(con: Conexion = Depends(conexion)) -> list[BbddRegistradaDto]:
+    """Paso 8.2: BBDD objetivo registradas, la última primero (las podrá elegir el módulo 2)."""
+    try:
+        registradas = listar_registro(con)
+    except psycopg.Error as e:
+        raise HTTPException(503, f"No se ha podido leer el registro: {str(e).strip().splitlines()[-1]}") from e
+    return [BbddRegistradaDto(nombre=r.nombre, tablas=r.tablas, total_filas=r.total_filas, fichero=r.fichero,
+                              bytes=r.bytes, registrada=r.registrada, existe=r.existe) for r in registradas]
+
+
+@app.get("/bbdd/dumps/{fichero}")
+def descargar_dump(fichero: str, directorio: Path = Depends(dumps)) -> FileResponse:
+    """Paso 8.1: descarga un dump (formato custom de pg_dump). Solo nombres de dump (nada de rutas)."""
+    ruta = directorio / fichero # Dada por el directorio del docker-compose.yml
+    if not FICHERO_DUMP.match(fichero) or not ruta.is_file():
+        raise HTTPException(404, f"No existe el dump «{fichero}»")
+    if not os.access(ruta, os.R_OK):
+        raise HTTPException(500, f"La API no tiene permiso para leer el dump «{fichero}»")
+    tipo = "application/sql" if fichero.endswith(".sql") else "application/octet-stream"
+    return FileResponse(ruta, media_type=tipo, filename=fichero)
 
 
 def _analizar_ddl(ddl: str):

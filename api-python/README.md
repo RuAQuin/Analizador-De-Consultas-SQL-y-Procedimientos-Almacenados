@@ -16,7 +16,8 @@ API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
 | 6.2. Inserción: generar las tuplas de cada árbol en profundidad | Hecho |
 | 6.3. Inserción: escribir las tuplas en PostgreSQL (tabla a tabla en orden de Kahn) | Hecho |
 | 7. ANALYZE para cerrar la carga | Hecho |
-| 8. pg_dump y registro | Pendiente |
+| 8.1. Respaldo: COPY ... TO PROGRAM 'pg_dump -F c' | Hecho |
+| 8.2. Registro de la BBDD objetivo en el repositorio | Hecho |
 
 ## Arrancar
 
@@ -46,6 +47,9 @@ uvicorn sqlanalyzer_api.app:app --reload
 | POST | `/bbdd/crear` | Pasos 4 y 5: revisa el nombre de la BBDD contra el servidor, la crea y crea sus tablas en el orden de Kahn |
 | POST | `/bbdd/insertar` | Paso 6: genera las tuplas siguiendo el diagrama y las escribe tabla a tabla en el orden de Kahn |
 | POST | `/bbdd/analizar` | Paso 7: ANALYZE de cada tabla en el orden de Kahn para cerrar la carga |
+| POST | `/bbdd/exportar` | Paso 8: respaldo con COPY ... TO PROGRAM 'pg_dump -F c' y registro como BBDD objetivo |
+| GET | `/bbdd/registro` | Paso 8.2: BBDD objetivo registradas, la última primero |
+| GET | `/bbdd/dumps/{fichero}` | Paso 8.1: descarga un dump |
 
 `POST /bbdd/ddl` recibe `{"ddl": "CREATE TABLE ..."}` y siempre responde 200:
 
@@ -274,6 +278,61 @@ Para comprobarlo en PostgreSQL:
 docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo -c "SELECT relname, reltuples, relpages FROM pg_class WHERE relname IN ('clientes', 'pedidos')"
 docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo -c "SELECT tablename, attname, n_distinct FROM pg_stats WHERE schemaname = 'public'"
 docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo -c "SELECT relname, last_analyze FROM pg_stat_user_tables"
+```
+
+### pg_dump y registro (paso 8)
+
+`exportar_bbdd` (`plano_datos/exportacion.py`) y `POST /bbdd/exportar`, con la misma petición que
+`/bbdd/analizar`. Corresponde a «Exportación pg_dump» y «Registro de BBDD objetivo» del plano de datos.
+
+- **Comprobación previa:** la carga debe estar cerrada. Si una tabla con filas no está analizada, no se
+  respalda («ejecuta antes ANALYZE (paso 7)»).
+- **8.1. Respaldo:** conectados a la BBDD que se respalda, se ejecuta
+
+  ```sql
+  COPY (SELECT 1) TO PROGRAM 'pg_dump -U postgres -d <bbdd> -F c -f /datos/dumps/<bbdd>_<AAAAMMDD>_<HHMMSS>.dump';
+  ```
+
+  - El programa lo lanza el propio servidor de PostgreSQL: pg_dump es siempre el del servidor (misma
+    versión) y la API no necesita instalarlo.
+  - Requiere un superusuario o el rol `pg_execute_server_program`.
+  - Formato custom (`-F c`): binario y comprimido, con tablas, datos, secuencias, restricciones e
+    índices. Se restaura con `pg_restore`.
+  - Solo llega a Windows al pulsar el enlace de descarga en la WebApp (se guarda en `Descargas`).
+  - Se escribe en `DIRECTORIO_DUMPS_SERVIDOR` (`/datos/dumps` del contenedor de PostgreSQL). Es el volumen
+    `dumps`, que la API monta en solo lectura en `DIRECTORIO_DUMPS` para poder descargarlo.
+  - El `entrypoint` de PostgreSQL en `docker-compose.yml` da el directorio al usuario `postgres`.
+  - `umask 022`: el dump queda legible para la API.
+  - Si pg_dump falla, se borra lo que haya escrito: nunca queda un dump a medias.
+  - El tamaño se lee con `pg_stat_file`.
+- **8.2. Registro:** la BBDD queda apuntada en el repositorio de la aplicación (`sqlanalyzer_repositorio`,
+  tabla `bbdd_objetivo`) con su DDL, las filas de cada tabla y su último dump. El módulo 2 podrá elegir entre
+  estas BBDD.
+  - El repositorio y su tabla se crean la primera vez.
+  - Volver a respaldar actualiza el registro.
+  - Si el registro falla, se borra el dump.
+- `GET /bbdd/registro` lista las BBDD registradas. `existe` indica si siguen en el servidor (se pueden haber
+  borrado a mano).
+- `GET /bbdd/dumps/{fichero}` descarga un dump. Solo acepta nombres de dump, no rutas. También acepta los
+  `.sql` de las exportaciones anteriores (formato script).
+
+```json
+{"valido": true, "errores": [], "bbdd": "tienda_demo", "fichero": "tienda_demo_20261121_153642.dump",
+ "bytes": 93758, "registrada": "2026-11-21T15:36:42.674274Z", "segundos": 0.13}
+```
+
+Para comprobarlo:
+
+```bash
+docker exec -it sqlanalyzer-postgres ls -l /datos/dumps                             # dumps generados
+docker exec -it sqlanalyzer-postgres pg_restore --list /datos/dumps/tienda_demo_20261121_153642.dump   # contenido
+docker exec -it sqlanalyzer-postgres psql -U postgres -d sqlanalyzer_repositorio -c "SELECT nombre, tablas, total_filas, fichero_dump, registrada FROM bbdd_objetivo"
+```
+
+Para restaurarlo (`--create` crea la BBDD, así que no debe existir). El dump ya está en el servidor:
+
+```bash
+docker exec -it sqlanalyzer-postgres pg_restore -U postgres -d postgres --create /datos/dumps/tienda_demo_20261121_153642.dump
 ```
 
 ## Tests

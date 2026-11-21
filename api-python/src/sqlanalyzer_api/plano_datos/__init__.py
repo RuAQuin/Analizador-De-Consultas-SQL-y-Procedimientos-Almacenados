@@ -9,7 +9,11 @@ from .creacion import Conexion, Creacion, TablaCreada, crear_bbdd
 from .insercion import (ArbolACargar, EstadoCarga, Insercion, Lote, TablaInsertada, Tupla, agrupar_por_tabla,
                         generar_carga, generar_tuplas, insertar_datos, recorrer_arboles)
 from .estadisticas import Analisis, TablaAnalizada, analizar_bbdd
+from .exportacion import (FICHERO_DUMP, BbddRegistrada, Exportacion, directorio_dumps, directorio_dumps_servidor,
+                          exportar_bbdd,
+                          listar_registro)
 
-__all__ = ["Analisis", "TablaAnalizada", "analizar_bbdd","Insercion", "Lote", "TablaInsertada", "agrupar_por_tabla", "insertar_datos", "Preparacion", "preparar_generador", "Tupla", "generar_carga", "generar_tuplas", "ArbolACargar", "EstadoCarga", "recorrer_arboles", "Conexion", "Creacion", "TablaCreada", "crear_bbdd", "Prototipo", "TablaPrototipo", "generar_prototipo", "Arbol", "ArbolOrdenado", "ClaveForanea", "Dependencias", "ErrorDdl", "NodoArbol", "OrdenArboles",
+__all__ = ["FICHERO_DUMP", "BbddRegistrada", "Exportacion", "directorio_dumps", "directorio_dumps_servidor", "exportar_bbdd", "listar_registro",
+"Analisis", "TablaAnalizada", "analizar_bbdd","Insercion", "Lote", "TablaInsertada", "agrupar_por_tabla", "insertar_datos", "Preparacion", "preparar_generador", "Tupla", "generar_carga", "generar_tuplas", "ArbolACargar", "EstadoCarga", "recorrer_arboles", "Conexion", "Creacion", "TablaCreada", "crear_bbdd", "Prototipo", "TablaPrototipo", "generar_prototipo", "Arbol", "ArbolOrdenado", "ClaveForanea", "Dependencias", "ErrorDdl", "NodoArbol", "OrdenArboles",
            "ResultadoDdl", "TablaOrdenada", "analizar_dependencias", "elegir_fks_agrupacion", "formar_arboles",
            "kahn", "ordenar_arboles", "parsear_ddl", "solo_ciclos"]

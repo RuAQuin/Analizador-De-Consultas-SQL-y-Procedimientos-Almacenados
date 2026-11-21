@@ -5,31 +5,38 @@ import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
 import es.tfg.sqlanalyzer.api.ApiPythonClient;
 import es.tfg.sqlanalyzer.api.CreacionBbdd;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
+import es.tfg.sqlanalyzer.api.ExportacionBbdd;
 import es.tfg.sqlanalyzer.api.InsercionDatos;
 import es.tfg.sqlanalyzer.api.PrototipoDatos;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
 import es.tfg.sqlanalyzer.form.CreacionBbddForm;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Módulo 1: generación de BBDD.
- * El estado del módulo (DDL validado, filas, prototipo, BBDD creada, datos insertados y ANALYZE) se guarda en la sesión para
+ * El estado del módulo (DDL validado, filas, prototipo, BBDD creada, datos insertados, ANALYZE y exportación) se guarda en la sesión para
  * poder avanzar paso a paso: la API Python no guarda nada entre peticiones.
  */
 @Controller
@@ -43,6 +50,9 @@ public class BbddController {
     static final String SESION_CREACION = "bbdd.creacion";
     static final String SESION_INSERCION = "bbdd.insercion";
     static final String SESION_ANALISIS = "bbdd.analisis";
+    static final String SESION_EXPORTACION = "bbdd.exportacion";
+    // Nombre de los dumps: <bbdd>_<AAAAMMDD>_<HHMMSS>.dump (o .sql, de exportaciones anteriores), como en la API.
+    static final Pattern FICHERO_DUMP = Pattern.compile("^[a-z_][a-z0-9_]{0,62}_\\d{8}_\\d{6}\\.(dump|sql)$");
     // Filas que se proponen por defecto para cada tabla.
     static final int FILAS_POR_DEFECTO = 10;
 
@@ -309,6 +319,79 @@ public class BbddController {
         return "redirect:/bbdd#analisis";
     }
 
+    @PostMapping("/exportar")
+    // Paso 8: el servidor respalda la BBDD con COPY ... TO PROGRAM 'pg_dump -F c' (8.1) y la API la registra como BBDD objetivo
+    // en el repositorio (8.2). La carga debe estar cerrada con el ANALYZE (paso 7).
+    public String exportarBbdd(Model model, HttpSession sesion, RedirectAttributes ra) {
+        CreacionBbddForm form = (CreacionBbddForm) sesion.getAttribute(SESION_FORM);
+        @SuppressWarnings("unchecked")
+        Map<String, String> filas = (Map<String, String>) sesion.getAttribute(SESION_FILAS);
+
+        // Comprobamos que la carga esté cerrada (paso 7).
+        if (form == null || filas == null || sesion.getAttribute(SESION_ANALISIS) == null) {
+            ra.addFlashAttribute("error", "Primero ejecuta el ANALYZE.");
+            return "redirect:/bbdd";
+        }
+        // Comprobamos que no se haya exportado ya.
+        ExportacionBbdd anterior = (ExportacionBbdd) sesion.getAttribute(SESION_EXPORTACION);
+        if (anterior != null) {
+            ra.addFlashAttribute("error", "«" + anterior.bbdd() + "» ya está exportada y registrada."
+                    + " Para empezar otra, valida un DDL nuevo.");
+            return "redirect:/bbdd";
+        }
+
+        List<String> errores = new ArrayList<>();
+        ExportacionBbdd exportacion = null;
+        // La API respalda la BBDD y la registra como BBDD objetivo; si algo falla, no deja nada registrado.
+        try {
+            exportacion = api.exportarBbdd(form.getNombreBbdd(), form.getDefinicionTablas(), numeros(filas, errores));
+            exportacion.errores().forEach(e -> errores.add(e.descripcion()));
+        } catch (ApiNoDisponibleException e) {
+            model.addAttribute("error", e.getMessage());
+        }
+
+        // Si algo falla (pg_dump, repositorio...), se muestra el aviso y se puede reintentar.
+        if (exportacion == null || !exportacion.valido()) {
+            model.addAttribute("form", form);
+            model.addAttribute("erroresExportacion", errores);
+            rellenarModelo(model, sesion);
+            return "bbdd";
+        }
+
+        // Guardamos en la sesión la exportación y mostramos el aviso.
+        sesion.setAttribute(SESION_EXPORTACION, exportacion);
+        ra.addFlashAttribute("aviso", "Se ha exportado «" + exportacion.bbdd() + "» en " + exportacion.fichero()
+                + " (" + exportacion.tamano() + ") y se ha registrado como BBDD objetivo.");
+        return "redirect:/bbdd#exportacion";
+    }
+
+    @GetMapping("/dumps/{fichero}")
+    // Paso 8.1: descarga del dump. La WebApp no lee el fichero: se lo pide a la API y lo copia en la respuesta.
+    public void descargarDump(@PathVariable String fichero, HttpServletResponse respuesta) throws IOException {
+        // Comprobamos que el nombre del fichero sea válido (como en la API). Si no, 404.
+        if (!FICHERO_DUMP.matcher(fichero).matches()) {
+            respuesta.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+        // El tipo de contenido depende de la extensión del fichero: .sql o .dump (binario).
+        respuesta.setContentType(fichero.endsWith(".sql") ? "application/sql" : "application/octet-stream");
+        // El nombre del fichero se envía en el encabezado Content-Disposition para que el navegador lo descargue.
+        respuesta.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                ContentDisposition.attachment().filename(fichero).build().toString());
+        try {
+            // La API descarga el dump y lo escribe en la respuesta. Si no existe, 404.
+            if (!api.descargarDump(fichero, respuesta.getOutputStream())) {
+                respuesta.reset();
+                respuesta.sendError(HttpServletResponse.SC_NOT_FOUND, "No existe el dump «" + fichero + "»");
+            }
+        } catch (ApiNoDisponibleException e) {
+            if (!respuesta.isCommitted()) {
+                respuesta.reset();
+                respuesta.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, e.getMessage());
+            }
+        }
+    }
+
     // Convierte las filas escritas en números; si alguna no lo es, añade el error.
     private static Map<String, Integer> numeros(Map<String, String> escritas, List<String> errores) {
         Map<String, Integer> filas = new LinkedHashMap<>();
@@ -364,6 +447,16 @@ public class BbddController {
         model.addAttribute("insercion", sesion.getAttribute(SESION_INSERCION));
         // Paso 7.
         model.addAttribute("analisis", sesion.getAttribute(SESION_ANALISIS));
+        // Paso 8: tras exportar, se muestran también las BBDD objetivo registradas.
+        Object exportacion = sesion.getAttribute(SESION_EXPORTACION);
+        model.addAttribute("exportacion", exportacion);
+        if (exportacion != null) {
+            try {
+                model.addAttribute("registro", api.listarRegistro());
+            } catch (ApiNoDisponibleException e) {
+                model.addAttribute("registro", List.of());
+            }
+        }
     }
 
     private void limpiarSesion(HttpSession sesion) {
@@ -374,5 +467,6 @@ public class BbddController {
         sesion.removeAttribute(SESION_CREACION);
         sesion.removeAttribute(SESION_INSERCION);
         sesion.removeAttribute(SESION_ANALISIS);
+        sesion.removeAttribute(SESION_EXPORTACION);
     }
 }

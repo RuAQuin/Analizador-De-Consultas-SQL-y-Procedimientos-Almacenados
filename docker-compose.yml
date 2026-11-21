@@ -19,6 +19,10 @@ services:
       - "${PG_PUERTO_HOST:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Paso 8: el servidor escribe aquí los dumps (COPY ... TO PROGRAM 'pg_dump ...'); la API los lee.
+      - dumps:/datos/dumps
+    # Antes de arrancar PostgreSQL, el directorio de dumps pasa a ser del usuario postgres (que ejecuta pg_dump).
+    entrypoint: ["sh", "-c", "chown postgres:postgres /datos/dumps && exec docker-entrypoint.sh postgres"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 5s
@@ -37,11 +41,13 @@ services:
       PG_CONTRASENA: ${PG_CONTRASENA:-postgres}
       PG_BD_MANTENIMIENTO: postgres
       PG_BD_REPOSITORIO: sqlanalyzer_repositorio
+      # Donde el servidor escribe los dumps y donde la API los lee para descargarlos (el mismo volumen).
+      DIRECTORIO_DUMPS_SERVIDOR: /datos/dumps
       DIRECTORIO_DUMPS: /datos/dumps
     ports:
       - "${API_PUERTO_HOST:-8000}:8000"
     volumes:
-      - dumps:/datos/dumps
+      - dumps:/datos/dumps:ro
     depends_on:
       postgres:
         condition: service_healthy

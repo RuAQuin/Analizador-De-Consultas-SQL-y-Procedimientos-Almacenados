@@ -48,7 +48,7 @@
                     <li th:classappend="${creacion != null} ? 'step-done'"><span class="step-dot"></span>Revisión y confirmación · CREATE DATABASE / CREATE TABLE</li>
                     <li th:classappend="${insercion != null} ? 'step-done'"><span class="step-dot"></span>Inserción de datos</li>
                     <li th:classappend="${analisis != null} ? 'step-done'"><span class="step-dot"></span>ANALYZE</li>
-                    <li><span class="step-dot"></span>pg_dump y registro</li>
+                    <li th:classappend="${exportacion != null} ? 'step-done'"><span class="step-dot"></span>pg_dump y registro</li>
                 </ol>
 
                 <div th:if="${orden != null}">
@@ -328,6 +328,81 @@
                     Puedes comprobarlo con
                     <span class="code" th:text="|docker exec -it sqlanalyzer-postgres psql -U postgres -d ${analisis.bbdd} -c &quot;SELECT relname, reltuples, relpages FROM pg_class WHERE relkind = 'r' AND relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)&quot;|">psql</span>
                 </p>
+            </div>
+        </section>
+
+        <section class="panel panel-ancho" id="exportacion" th:if="${analisis != null}">
+            <h2 class="panel-title">8. pg_dump y registro</h2>
+
+            <div class="alert alert-error" role="alert"
+                 th:if="${erroresExportacion != null and !#lists.isEmpty(erroresExportacion)}">
+                <strong>No se ha exportado la base de datos</strong>
+                <ul class="lista-avisos">
+                    <li th:each="e : ${erroresExportacion}" th:text="${e}">aviso</li>
+                </ul>
+            </div>
+
+            <div th:if="${exportacion == null}">
+                <p class="muted">
+                    El propio servidor de PostgreSQL genera el respaldo con
+                    <span class="code">COPY (SELECT 1) TO PROGRAM 'pg_dump … -F c'</span>: formato custom (binario y
+                    comprimido) con las tablas, los datos, las secuencias, las restricciones y los índices, que se
+                    restaura con pg_restore. Después la base de datos se registra como BBDD objetivo en el repositorio
+                    de la aplicación, para poder analizar consultas sobre ella.
+                </p>
+                <form th:action="@{/bbdd/exportar}" method="post">
+                    <button type="submit" class="btn btn-primary">Exportar con pg_dump y registrar</button>
+                </form>
+            </div>
+
+            <div th:if="${exportacion != null}">
+                <dl class="resumen">
+                    <dt>Base de datos</dt>
+                    <dd class="code" th:text="${exportacion.bbdd}">tienda_demo</dd>
+                    <dt>Respaldo</dt>
+                    <dd>
+                        <a class="code" th:href="@{/bbdd/dumps/{f}(f=${exportacion.fichero})}"
+                           th:text="${exportacion.fichero}">tienda_demo_20261118_101500.dump</a>
+                        <span class="muted" th:text="|(${exportacion.tamano()}, ${exportacion.segundos} s)|">(12.4 KB)</span>
+                    </dd>
+                    <dt>En Docker</dt>
+                    <dd class="code" th:text="|/datos/dumps/${exportacion.fichero}|">/datos/dumps/tienda_demo.dump</dd>
+                    <dt>En Windows</dt>
+                    <dd class="muted">Pulsa el enlace del respaldo para descargarlo (se guarda en Descargas).</dd>
+                    <dt>Registrada</dt>
+                    <dd th:text="${#temporals.format(exportacion.registradaLocal(), 'dd/MM/yyyy HH:mm:ss')}">18/11/2026 10:15:00</dd>
+                </dl>
+                <p class="muted">
+                    El respaldo está en el servidor (/datos/dumps). Para restaurarlo en el PostgreSQL de Docker
+                    (--create crea la base de datos, así que no debe existir):
+                </p>
+                <p class="code sentencia"
+                   th:text="|docker exec -it sqlanalyzer-postgres pg_restore -U postgres -d postgres --create /datos/dumps/${exportacion.fichero}|">pg_restore</p>
+                <p class="muted">En otro servidor con el cliente de PostgreSQL instalado, con el fichero descargado:
+                    <span class="code" th:text="|pg_restore -U postgres -d postgres --create ${exportacion.fichero}|">pg_restore</span>.
+                </p>
+
+                <h3 class="panel-subtitle">BBDD objetivo registradas</h3>
+                <p class="muted" th:if="${#lists.isEmpty(registro)}">No se ha podido leer el registro.</p>
+                <table class="table" th:unless="${#lists.isEmpty(registro)}">
+                    <thead>
+                        <tr><th>Base de datos</th><th>Tablas</th><th>Filas</th><th>Último dump</th><th>Registrada</th><th>En el servidor</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="r : ${registro}">
+                            <td class="code" th:text="${r.nombre}">tienda_demo</td>
+                            <td th:text="${r.tablas}">2</td>
+                            <td th:text="${r.totalFilas}">10</td>
+                            <td>
+                                <a class="code" th:href="@{/bbdd/dumps/{f}(f=${r.fichero})}" th:text="${r.fichero}">dump.sql</a>
+                                <span class="muted" th:text="|(${r.tamano()})|">(12.4 KB)</span>
+                            </td>
+                            <td th:text="${#temporals.format(r.registradaLocal(), 'dd/MM/yyyy HH:mm')}">18/11/2026 10:15</td>
+                            <td th:text="${r.existe} ? 'Sí' : 'Borrada'">Sí</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="muted">Con esto termina el módulo 1. Para crear otra base de datos, valida un DDL nuevo.</p>
             </div>
         </section>
     </main>
