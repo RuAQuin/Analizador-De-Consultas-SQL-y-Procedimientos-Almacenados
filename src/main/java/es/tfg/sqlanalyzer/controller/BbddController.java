@@ -7,15 +7,22 @@ import es.tfg.sqlanalyzer.api.CreacionBbdd;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
 import es.tfg.sqlanalyzer.api.ExportacionBbdd;
 import es.tfg.sqlanalyzer.api.InsercionDatos;
+import es.tfg.sqlanalyzer.api.ProgresoInsercion;
 import es.tfg.sqlanalyzer.api.PrototipoDatos;
+import es.tfg.sqlanalyzer.api.PruebaServidor;
+import es.tfg.sqlanalyzer.api.RestauracionBbdd;
+import es.tfg.sqlanalyzer.api.Servidor;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
 import es.tfg.sqlanalyzer.form.CreacionBbddForm;
+import es.tfg.sqlanalyzer.form.ServidorForm;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
@@ -25,6 +32,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.io.IOException;
@@ -51,10 +59,15 @@ public class BbddController {
     static final String SESION_INSERCION = "bbdd.insercion";
     static final String SESION_ANALISIS = "bbdd.analisis";
     static final String SESION_EXPORTACION = "bbdd.exportacion";
+    // Paso 9: última restauración en otro servidor y último servidor usado (con su contraseña, solo en la sesión).
+    static final String SESION_RESTAURACION = "bbdd.restauracion";
+    static final String SESION_SERVIDOR = "bbdd.servidor";
     // Nombre de los dumps: <bbdd>_<AAAAMMDD>_<HHMMSS>.dump (o .sql, de exportaciones anteriores), como en la API.
     static final Pattern FICHERO_DUMP = Pattern.compile("^[a-z_][a-z0-9_]{0,62}_\\d{8}_\\d{6}\\.(dump|sql)$");
-    // Filas que se proponen por defecto para cada tabla.
+    // Filas que se proponen por defecto para las tablas de nivel 0 (las hijas, ver filasPorDefecto).
     static final int FILAS_POR_DEFECTO = 10;
+    // Máximo de filas por tabla que acepta la API (MAX_FILAS en prototipo.py).
+    static final int MAX_FILAS = 100_000;
 
     private final ApiPythonClient api;
 
@@ -118,6 +131,105 @@ public class BbddController {
                 + " se han formado los árboles de agrupación y se ha decidido su orden de carga."
                 + " Ahora indica cuántas filas quieres en cada tabla.");
         return "redirect:/bbdd";
+    }
+
+    @PostMapping("/servidor/probar")
+    // Paso 9: «Probar conexión» con el PostgreSQL de otro equipo. Solo recuerda el servidor probado (con su contraseña,
+    // únicamente en la sesión) para no tener que volver a escribirla al restaurar.
+    public String probarServidor(@Valid @ModelAttribute("servidorForm") ServidorForm servidorForm,
+                                 BindingResult result,
+                                 Model model,
+                                 HttpSession sesion) {
+        // Si la contraseña no se ha escrito, se usa la del último servidor usado (probado o restaurado) con el mismo host, puerto y usuario.
+        completarContrasena(servidorForm, sesion);
+        if (!result.hasErrors()) {
+            // Si no hay errores de validación, se prueba la conexión con el servidor PostgreSQL especificado por el formulario.
+            Servidor servidor = servidorForm.servidor();
+            try {
+                //La API prueba la conexión con el servidor PostgreSQL especificado por "servidor".
+                PruebaServidor prueba = api.probarServidor(servidor);
+                // Si la conexión es válida, se guarda el servidor en la sesión y se muestra un aviso de éxito.
+                if (prueba.valido()) {
+                    sesion.setAttribute(SESION_SERVIDOR, servidor);
+                    model.addAttribute("aviso", "Conexión correcta con " + prueba.servidor() + " (PostgreSQL "
+                            + prueba.version() + "): el usuario «" + servidor.usuario() + "» puede crear bases de datos.");
+                // Si la conexión no es válida, se muestran los errores devueltos por la API.
+                } else {
+                    model.addAttribute("erroresRestauracion", prueba.errores().stream().map(ErrorDdl::descripcion).toList());
+                }
+            } catch (ApiNoDisponibleException e) {
+                model.addAttribute("error", e.getMessage());
+            }
+        }
+        // Se vuelve a la pantalla con el formulario del paso 1 y los errores de validación (si los hay).
+        return pantalla(model, sesion);
+    }
+
+    @PostMapping("/restaurar")
+    // Paso 9 (opcional): la API restaura el respaldo del paso 8 en el PostgreSQL de otro equipo con pg_restore --create,
+    // ejecuta ANALYZE allí y registra la copia como BBDD objetivo de ese servidor. Se puede repetir en otros servidores.
+    public String restaurar(@Valid @ModelAttribute("servidorForm") ServidorForm servidorForm,
+                            BindingResult result,
+                            Model model,
+                            HttpSession sesion,
+                            RedirectAttributes ra) {
+        // Comprobamos que haya un respaldo del paso 8 en la sesión.
+        ExportacionBbdd exportacion = (ExportacionBbdd) sesion.getAttribute(SESION_EXPORTACION);
+        if (exportacion == null) {
+            ra.addFlashAttribute("error", "Primero exporta la base de datos (paso 8).");
+            return "redirect:/bbdd";
+        }
+        // Si la contraseña no se ha escrito, se usa la del último servidor usado (probado o restaurado) con el mismo host, puerto y usuario.
+        completarContrasena(servidorForm, sesion);
+        if (result.hasErrors()) {
+            return pantalla(model, sesion);
+        }
+
+        Servidor servidor = servidorForm.servidor();
+        RestauracionBbdd restauracion;
+        try {
+            // La API restaura el respaldo del paso 8 en el PostgreSQL de otro equipo, ejecuta ANALYZE allí y registra la copia como BBDD objetivo.
+            restauracion = api.restaurarBbdd(exportacion.bbdd(), exportacion.fichero(), servidor);
+        // Si hay un error al contactar con la API Python, se muestra el mensaje de error en la pantalla.
+        } catch (ApiNoDisponibleException e) {
+            model.addAttribute("error", e.getMessage());
+            return pantalla(model, sesion);
+        }
+        // Si algo falla (no responde, ya existe, versión antigua...), se muestra el motivo y se puede reintentar.
+        if (!restauracion.valido()) {
+            model.addAttribute("erroresRestauracion", restauracion.errores().stream().map(ErrorDdl::descripcion).toList());
+            return pantalla(model, sesion);
+        }
+        // Si la restauración es correcta, se guarda el servidor y la restauración en la sesión y se muestra un aviso de éxito.
+        sesion.setAttribute(SESION_SERVIDOR, servidor);
+        sesion.setAttribute(SESION_RESTAURACION, restauracion);
+        ra.addFlashAttribute("aviso", "Se ha restaurado «" + restauracion.bbdd() + "» en " + restauracion.servidor()
+                + " (PostgreSQL " + restauracion.version() + "): " + restauracion.tablas().size() + " tablas y "
+                + restauracion.totalFilas() + " filas, ya analizadas (" + restauracion.segundos() + " s).");
+        return "redirect:/bbdd#restauracion";
+    }
+
+    // Vuelve a la pantalla (sin redirigir) con el formulario del paso 1 de la sesión.
+    private String pantalla(Model model, HttpSession sesion) {
+        Object form = sesion.getAttribute(SESION_FORM);
+        model.addAttribute("form", form != null ? form : new CreacionBbddForm());
+        rellenarModelo(model, sesion);
+        return "bbdd";
+    }
+
+    // La contraseña no se vuelve a mostrar: si viene vacía, se usa la del último servidor usado (probado o restaurado)
+    // con el mismo host, puerto y usuario.
+    private void completarContrasena(ServidorForm servidorForm, HttpSession sesion) {
+        if (servidorForm.getContrasena() != null && !servidorForm.getContrasena().isEmpty()) {
+            return;
+        }
+        Servidor conocido = (Servidor) sesion.getAttribute(SESION_SERVIDOR);
+        if (conocido != null && servidorForm.getHost() != null && servidorForm.getUsuario() != null
+                && conocido.host().equals(servidorForm.getHost().strip())
+                && Integer.valueOf(conocido.puerto()).equals(servidorForm.getPuerto())
+                && conocido.usuario().equals(servidorForm.getUsuario().strip())) {
+            servidorForm.setContrasena(conocido.contrasena());
+        }
     }
 
     @PostMapping("/prototipo")
@@ -272,6 +384,27 @@ public class BbddController {
         ra.addFlashAttribute("aviso", "Se han insertado " + insercion.totalFilas() + " filas en «" + insercion.bbdd()
                 + "» (" + insercion.segundos() + " s).");
         return "redirect:/bbdd#insercion";
+    }
+
+    @GetMapping("/insertar/progreso")
+    @ResponseBody
+    // Paso 6: reloj de la carga. Mientras dura POST /bbdd/insertar, carga.js pregunta cada segundo cómo va.
+    // 204 si no hay ninguna inserción en marcha (aún no ha empezado o ya ha terminado) o no hay BBDD en la sesión.
+    public ResponseEntity<ProgresoInsercion> progresoInsercion(HttpSession sesion) {
+        // Comprobamos que haya un DDL validado y que se haya creado la BBDD (paso 5).
+        CreacionBbddForm form = (CreacionBbddForm) sesion.getAttribute(SESION_FORM);
+        // Si no hay BBDD en la sesión, devolvemos 204 No Content.
+        if (form == null) {
+            return ResponseEntity.noContent().build();
+        }
+        try {
+            // Preguntamos a la API Python cómo va la inserción de datos en la BBDD especificada por "nombreBbdd" (paso 6).
+            ProgresoInsercion progreso = api.progresoInsercion(form.getNombreBbdd());
+            return progreso == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(progreso);
+        // Si hay un error al contactar con la API Python, devolvemos 503 Service Unavailable.
+        } catch (ApiNoDisponibleException e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+        }
     }
 
     @PostMapping("/analizar")
@@ -433,10 +566,7 @@ public class BbddController {
             @SuppressWarnings("unchecked")
             Map<String, String> filas = (Map<String, String>) sesion.getAttribute(SESION_FILAS);
             if (filas == null) {
-                filas = new LinkedHashMap<>();
-                for (TablaOrdenada t : validacion.orden()) {
-                    filas.put(t.tabla(), String.valueOf(FILAS_POR_DEFECTO));
-                }
+                filas = filasPorDefecto(validacion);
             }
             model.addAttribute("filas", filas);
         }
@@ -457,6 +587,36 @@ public class BbddController {
                 model.addAttribute("registro", List.of());
             }
         }
+        // Paso 9 (opcional, tras exportar): restaurar en el PostgreSQL de otro equipo.
+        model.addAttribute("restauracion", sesion.getAttribute(SESION_RESTAURACION));
+        Servidor ultimo = (Servidor) sesion.getAttribute(SESION_SERVIDOR);
+        model.addAttribute("contrasenaGuardada", ultimo != null);
+        if (exportacion != null && !model.containsAttribute("servidorForm")) {
+            model.addAttribute("servidorForm", ServidorForm.de(ultimo));
+        }
+    }
+
+    // Paso 3: filas que se proponen por defecto. Las tablas de nivel 0 empiezan con FILAS_POR_DEFECTO y cada
+    // hija con el producto de las filas de sus padres (una FK por padre), para que quepan todas las
+    // combinaciones de padres (p. ej. una PK compuesta de dos FK). Con un solo padre, las mismas filas que él.
+    // Se recorre en orden de Kahn, así que los padres ya tienen sus filas. La FK a sí misma no cuenta.
+    // Se limita a MAX_FILAS (el máximo que acepta la API).
+    // Solo se calcula al proponerlas: si el usuario cambia un padre, las hijas no cambian.
+    static Map<String, String> filasPorDefecto(ValidacionDdl validacion) {
+        Map<String, Integer> minimos = new LinkedHashMap<>();
+        // Se recorre en orden de Kahn, así que los padres ya tienen sus filas.
+        for (TablaOrdenada t : validacion.orden()) {
+            long producto = validacion.clavesForaneas().stream()
+                    .filter(fk -> fk.tabla().equals(t.tabla()) && !fk.tablaPadre().equals(t.tabla())) // FK a sí misma no cuenta.
+                    .mapToLong(fk -> minimos.getOrDefault(fk.tablaPadre(), FILAS_POR_DEFECTO))
+                    .reduce((a, b) -> Math.min(a * b, MAX_FILAS)) // Se limita en cada paso para no desbordar.
+                    .orElse(FILAS_POR_DEFECTO); // Nivel 0: sin padres.
+            minimos.put(t.tabla(), (int) Math.min(producto, MAX_FILAS));
+        }
+        // Convertimos a Map<String, String> para que Thymeleaf lo muestre en el formulario.
+        Map<String, String> filas = new LinkedHashMap<>();
+        minimos.forEach((tabla, n) -> filas.put(tabla, String.valueOf(n)));
+        return filas;
     }
 
     private void limpiarSesion(HttpSession sesion) {
@@ -468,5 +628,6 @@ public class BbddController {
         sesion.removeAttribute(SESION_INSERCION);
         sesion.removeAttribute(SESION_ANALISIS);
         sesion.removeAttribute(SESION_EXPORTACION);
+        sesion.removeAttribute(SESION_RESTAURACION);
     }
 }

@@ -44,9 +44,14 @@ services:
       # Donde el servidor escribe los dumps y donde la API los lee para descargarlos (el mismo volumen).
       DIRECTORIO_DUMPS_SERVIDOR: /datos/dumps
       DIRECTORIO_DUMPS: /datos/dumps
+      # Paso 9: si el usuario indica «localhost» como otro servidor, es su equipo, no el contenedor de la API.
+      HOST_LOCAL: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${API_PUERTO_HOST:-8000}:8000"
     volumes:
+      # Para descargar los dumps y restaurarlos en otro servidor (paso 9).
       - dumps:/datos/dumps:ro
     depends_on:
       postgres:
@@ -58,6 +63,23 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Solo para probar el paso 9 («restaurar en otro servidor») sin tener otro equipo: un servidor aparte (otro
+  # puerto y otra contraseña). No arranca con «docker compose up»; se arranca con
+  #   docker compose --profile pruebas up -d otro-equipo
+  # y en la WebApp se indica como servidor: tu IP de la red (o localhost), puerto 5434, postgres / otroequipo.
+  otro-equipo:
+    image: postgres:17
+    container_name: sqlanalyzer-otro-equipo
+    profiles: ["pruebas"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: otroequipo
+    ports:
+      - "5434:5432"
+    volumes:
+      - otro-equipo:/var/lib/postgresql/data
+
 volumes:
   pgdata:
   dumps:
+  otro-equipo:

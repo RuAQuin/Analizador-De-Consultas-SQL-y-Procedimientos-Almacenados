@@ -27,9 +27,11 @@ orden del diagrama (id 1, 2, 3...).
   usuario no repitan ids.
 - Todo va en una transacción: si una fila falla (CHECK, trigger...) no se inserta nada y el error dice
   la tabla y la fila.
+- Progreso: mientras inserta, ``progreso_insercion(nombre)`` dice la fase (generando o escribiendo), la tabla
+  y cuántas filas lleva de cuántas. La WebApp lo consulta cada segundo para mostrar el reloj de la carga.
 - PENDIENTE: la inserción es síncrona. El esquema funcional prevé workers asíncronos para tareas largas;
   con el límite de 100.000 filas por tabla y COPY tarda segundos, pero con muchas tablas grandes
-  convendría pasarla a un worker con progreso.
+  convendría pasarla a un worker.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import psycopg
 from pglast import ast
@@ -48,7 +50,7 @@ from .creacion import Conexion, revisar_nombre
 from .ddl import ErrorDdl
 from .dependencias import Dependencias
 from .orden_arboles import ArbolOrdenado, OrdenArboles
-from .prototipo import AUTO, Generador, preparar_generador
+from .prototipo import AUTO, Generador, Preparacion, preparar_generador
 
 
 @dataclass
@@ -224,6 +226,48 @@ def agrupar_por_tabla(tuplas: Iterable[Tupla], orden: list[str]) -> list[Lote]:
     return [Lote(t, columnas.get(t, ()), filas[t]) for t in orden]
 
 
+# --- Progreso de la inserción (reloj de la carga en la WebApp) ---
+
+GENERANDO = "generando"
+ESCRIBIENDO = "escribiendo"
+# Cada cuántas filas se actualiza el progreso (actualizarlo en cada fila frenaría la carga).
+AVISO_CADA = 1_000
+
+
+@dataclass
+class ProgresoCarga:
+    """Cómo va la inserción de una BBDD: primero se generan las tuplas y después se escriben, tabla a tabla.
+
+    En cada fase, ``hechas`` va de 0 a ``total`` (las filas de todas las tablas)."""
+    fase: str # Generando o Escribiendo.
+    total: int
+    hechas: int = 0
+    # Tabla que se está escribiendo (None mientras se generan las tuplas).
+    tabla: str | None = None
+
+
+# Inserciones en marcha, por nombre de BBDD. La API corre en un solo proceso: la consulta del progreso
+# (que FastAPI atiende en otro hilo) lee el mismo objeto que va actualizando la inserción.
+_EN_MARCHA: dict[str, ProgresoCarga] = {}
+
+
+def progreso_insercion(nombre: str) -> ProgresoCarga | None:
+    """Copia del progreso de la inserción en marcha en ``nombre`` (None si no hay ninguna)."""
+    progreso = _EN_MARCHA.get(nombre)
+    return replace(progreso) if progreso else None # Si la inserción se ha acabado --> None.
+
+
+def _contando(tuplas: Iterable[Tupla], progreso: ProgresoCarga) -> Iterator[Tupla]:
+    """Deja pasar las tuplas y cuenta las generadas en el progreso."""
+    hechas = 0
+    for hechas, tupla in enumerate(tuplas, start=1):
+        # Actualización cada 1000 filas.
+        if hechas % AVISO_CADA == 0:
+            progreso.hechas = hechas
+        yield tupla
+    progreso.hechas = hechas
+
+
 def _identificador(tabla: str) -> sql.Identifier:
     """«ventas.clientes» → "ventas"."clientes"."""
     return sql.Identifier(*tabla.split(".", 1))
@@ -238,19 +282,27 @@ class _FalloFila(Exception):
         self.error = error
 
 
-def _escribir(c: psycopg.Connection, lote: Lote) -> None:
-    """Escribe las tuplas de una tabla con COPY (o con sus DEFAULT si todas sus columnas son AUTO)."""
+def _escribir(c: psycopg.Connection, lote: Lote, progreso: ProgresoCarga | None = None) -> None:
+    """Escribe las tuplas de una tabla con COPY (o con sus DEFAULT si todas sus columnas son AUTO).
+
+    Si se indica ``progreso``, suma las filas escritas a las que ya llevaba."""
     tabla = _identificador(lote.tabla)
+    antes = progreso.hechas if progreso else 0 # Filas escritas de las tablas anteriores.
     try:
         if not lote.columnas:
             # Ninguna columna que escribir (TODAS AUTO): cada fila toma los DEFAULT de PostgreSQL.
             c.execute(sql.SQL("INSERT INTO {} SELECT FROM generate_series(1, %s)").format(tabla), (len(lote.filas),))
-            return
-        # Usamos COPY en lugar de INSERT para que la inserción sea mucho más rápida.
-        copia = sql.SQL("COPY {} ({}) FROM STDIN").format(tabla, sql.SQL(", ").join(map(sql.Identifier, lote.columnas)))
-        with c.cursor() as cur, cur.copy(copia) as copy:
-            for fila in lote.filas:
-                copy.write_row(fila) # Escritura de filas.
+        else:
+            # Usamos COPY en lugar de INSERT para que la inserción sea mucho más rápida.
+            copia = sql.SQL("COPY {} ({}) FROM STDIN").format(tabla, sql.SQL(", ").join(map(sql.Identifier, lote.columnas)))
+            with c.cursor() as cur, cur.copy(copia) as copy:
+                for i, fila in enumerate(lote.filas, start=1):
+                    copy.write_row(fila) # Escritura de filas.
+                    # Actualización cada 1000 filas.
+                    if progreso and i % AVISO_CADA == 0:
+                        progreso.hechas = antes + i
+        if progreso:
+            progreso.hechas = antes + len(lote.filas) # Últimas filas.
     # En el momento en el que haya un error, no se inserta ninguna tupla en la tabla (pasado o futura) durante este COMMIT.
     except psycopg.Error as e:
         raise _FalloFila(lote.tabla, e) from e
@@ -295,11 +347,27 @@ def insertar_datos(nombre: str, sentencias: tuple[ast.RawStmt, ...], dependencia
     preparacion = preparar_generador(sentencias, dependencias, filas)
     if not preparacion.generador:
         return Insercion(errores=preparacion.errores)
-    generador = preparacion.generador
 
+    # Progreso de la carga: se publica mientras dura la inserción y se quita al terminar (o al fallar).
+    progreso = ProgresoCarga(GENERANDO, total=sum(preparacion.generador.filas[t] for t in preparacion.orden))
+    _EN_MARCHA[nombre] = progreso
+    try:
+        return _generar_y_escribir(nombre, arboles, orden_carga, preparacion, conexion, progreso)
+    finally:
+        if _EN_MARCHA.get(nombre) is progreso:
+            del _EN_MARCHA[nombre]
+
+
+def _generar_y_escribir(nombre: str, arboles: list[Arbol], orden_carga: OrdenArboles, preparacion: Preparacion,
+                        conexion: Conexion, progreso: ProgresoCarga) -> Insercion:
+    """Pasos 6.1 a 6.3 una vez comprobados el nombre y el prototipo, actualizando el progreso."""
+    generador = preparacion.generador
     inicio = time.perf_counter() # Hora de inicio.
     # Generación de todas las tuplas y se ordenación por lotes.
-    lotes = agrupar_por_tabla(generar_carga(arboles, orden_carga, generador), preparacion.orden)
+    lotes = agrupar_por_tabla(_contando(generar_carga(arboles, orden_carga, generador), progreso),
+                              preparacion.orden)
+    # Empieza la escritura: el contador vuelve a 0 y sube con las filas escritas.
+    progreso.fase, progreso.hechas = ESCRIBIENDO, 0
     try:
         # Una sola transacción: al salir del with se confirma, o se deshace si hay una excepción.
         with conexion.conectar(nombre) as c:
@@ -312,7 +380,8 @@ def insertar_datos(nombre: str, sentencias: tuple[ast.RawStmt, ...], dependencia
             # Por cada lote con filas, se escribe y se ajustan secuencias.
             for lote in lotes:
                 if lote.filas:
-                    _escribir(c, lote)
+                    progreso.tabla = lote.tabla
+                    _escribir(c, lote, progreso)
                     _ajustar_secuencias(c, lote, generador)
     # Mensaje con la Fila y Tabla.
     except _FalloFila as e:
@@ -331,5 +400,6 @@ def insertar_datos(nombre: str, sentencias: tuple[ast.RawStmt, ...], dependencia
                      segundos=round(time.perf_counter() - inicio, 2))
 
 
-__all__ = ["AUTO", "ArbolACargar", "EstadoCarga", "Insercion", "Lote", "TablaInsertada", "Tupla",
-           "agrupar_por_tabla", "generar_carga", "generar_tuplas", "insertar_datos", "recorrer_arboles"]
+__all__ = ["AUTO", "ESCRIBIENDO", "GENERANDO", "ArbolACargar", "EstadoCarga", "Insercion", "Lote", "ProgresoCarga",
+           "TablaInsertada", "Tupla", "agrupar_por_tabla", "generar_carga", "generar_tuplas", "insertar_datos",
+           "progreso_insercion", "recorrer_arboles"]

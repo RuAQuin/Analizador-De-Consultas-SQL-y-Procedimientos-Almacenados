@@ -53,6 +53,20 @@ public class ApiPythonClient {
         return post("/bbdd/insertar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), InsercionDatos.class);
     }
 
+    // Paso 6: cómo va la inserción en marcha en «nombre» (reloj de la carga). Null si no hay ninguna.
+    public ProgresoInsercion progresoInsercion(String nombre) {
+        try {
+            // Envía una petición GET a la API Python para obtener el progreso de la inserción de datos en la BBDD especificada por "nombre".
+            return rest.get().uri("/bbdd/insertar/progreso/{nombre}", nombre).exchange((peticion, respuesta) ->
+                    // 404: la inserción aún no ha empezado o ya ha terminado.
+                    respuesta.getStatusCode().is2xxSuccessful() ? respuesta.bodyTo(ProgresoInsercion.class) : null);
+        // Si hay un error al contactar con la API Python, lanza una excepción personalizada con un mensaje de error.
+        } catch (RestClientException e) {
+            throw new ApiNoDisponibleException(
+                    "No se ha podido contactar con la API Python (" + url + "). ¿Está arrancada?", e);
+        }
+    }
+
     // Paso 7 del módulo 1: ANALYZE de las tablas para cerrar la carga.
     public AnalisisBbdd analizarBbdd(String nombre, String ddl, Map<String, Integer> filas) {
         return post("/bbdd/analizar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), AnalisisBbdd.class);
@@ -61,6 +75,17 @@ public class ApiPythonClient {
     // Paso 8 del módulo 1: respaldo con pg_dump (formato custom) y registro como BBDD objetivo.
     public ExportacionBbdd exportarBbdd(String nombre, String ddl, Map<String, Integer> filas) {
         return post("/bbdd/exportar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), ExportacionBbdd.class);
+    }
+
+    // Paso 9: «Probar conexión» con el PostgreSQL de otro equipo (que la API llega y que se pueden crear BBDD).
+    public PruebaServidor probarServidor(Servidor servidor) {
+        return post("/bbdd/servidor/probar", servidor, PruebaServidor.class);
+    }
+
+    // Paso 9: restaura el respaldo del paso 8 (fichero) en el PostgreSQL de otro equipo, lo analiza y lo registra.
+    public RestauracionBbdd restaurarBbdd(String nombre, String fichero, Servidor servidor) {
+        return post("/bbdd/restaurar", Map.of("nombre", nombre, "fichero", fichero, "servidor", servidor),
+                RestauracionBbdd.class);
     }
 
     // Paso 8.2: BBDD objetivo registradas, la última primero.

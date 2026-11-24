@@ -13,6 +13,7 @@ import es.tfg.sqlanalyzer.api.ErrorDdl;
 import es.tfg.sqlanalyzer.api.ExportacionBbdd;
 import es.tfg.sqlanalyzer.api.InsercionDatos;
 import es.tfg.sqlanalyzer.api.NodoArbol;
+import es.tfg.sqlanalyzer.api.ProgresoInsercion;
 import es.tfg.sqlanalyzer.api.PrototipoDatos;
 import es.tfg.sqlanalyzer.api.TablaOrdenada;
 import es.tfg.sqlanalyzer.api.TablaAnalizada;
@@ -435,6 +436,42 @@ class BbddTests {
     }
 
     @Test
+    // El formulario de inserción lleva la URL del progreso y la página incluye el reloj de la carga (oculto).
+    void elFormularioDeInsertarTieneElRelojDeLaCarga() throws Exception {
+        mvc.perform(get("/bbdd").session(conBbddCreada()))
+           .andExpect(content().string(containsString("data-progreso=\"/bbdd/insertar/progreso\"")))
+           .andExpect(content().string(containsString("id=\"reloj-carga\"")))
+           .andExpect(content().string(containsString("/js/carga.js")));
+    }
+
+    @Test
+    // Mientras dura la inserción, el progreso de la API llega como JSON.
+    void progresoDeLaInsercionEnMarcha() throws Exception {
+        var sesion = conBbddCreada();
+        when(api.progresoInsercion("tienda")).thenReturn(new ProgresoInsercion("escribiendo", "compras", 5, 9));
+        mvc.perform(get("/bbdd/insertar/progreso").session(sesion))
+           .andExpect(status().isOk())
+           .andExpect(jsonPath("$.fase").value("escribiendo"))
+           .andExpect(jsonPath("$.tabla").value("compras"))
+           .andExpect(jsonPath("$.hechas").value(5))
+           .andExpect(jsonPath("$.total").value(9));
+    }
+
+    @Test
+    // Sin inserción en marcha (o sin BBDD en la sesión) no hay progreso: 204. Si la API no responde: 503.
+    void progresoSinInsercionEnMarcha() throws Exception {
+        mvc.perform(get("/bbdd/insertar/progreso")).andExpect(status().isNoContent());
+        verify(api, never()).progresoInsercion(anyString());
+
+        var sesion = conBbddCreada();
+        when(api.progresoInsercion("tienda")).thenReturn(null);
+        mvc.perform(get("/bbdd/insertar/progreso").session(sesion)).andExpect(status().isNoContent());
+
+        when(api.progresoInsercion("tienda")).thenThrow(new ApiNoDisponibleException("sin API", null));
+        mvc.perform(get("/bbdd/insertar/progreso").session(sesion)).andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
     // Sin BBDD creada no aparece el botón.
     void sinBbddNoHayBotonDeInsertar() throws Exception {
         mvc.perform(get("/bbdd").session(conPrototipo()))
@@ -624,8 +661,8 @@ class BbddTests {
         var exportacion = exportada();
         when(api.exportarBbdd("tienda", DDL, FILAS)).thenReturn(exportacion);
         when(api.listarRegistro()).thenReturn(List.of(
-                new BbddRegistrada("tienda", 2, 9, DUMP, 12_700, REGISTRADA, true),
-                new BbddRegistrada("antigua", 1, 5, "antigua_20261101_090000.sql", 900, REGISTRADA.minusDays(17), false)));
+                new BbddRegistrada("tienda", 2, 9, DUMP, 12_700, REGISTRADA, true, ""),
+                new BbddRegistrada("antigua", 1, 5, "antigua_20261101_090000.sql", 900, REGISTRADA.minusDays(17), false, "")));
 
         mvc.perform(post("/bbdd/exportar").with(csrf()).session(sesion))
            .andExpect(redirectedUrl("/bbdd#exportacion"))

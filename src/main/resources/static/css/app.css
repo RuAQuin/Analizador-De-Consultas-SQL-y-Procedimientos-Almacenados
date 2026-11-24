@@ -220,7 +220,23 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .step-dot { width: .7rem; height: .7rem; border-radius: 50%; border: 2px solid var(--line); }
 .step-done { color: var(--ink) !important; }
 .step-done .step-dot { background: var(--accent); border-color: var(--accent); }
-.step-sub { padding-left: 1.3rem; font-size: .9rem; }
+/* Barra de pasos realizados y mensajes del módulo 1: se quedan fijos arriba al desplazarse. */
+.cabecera-fija {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);
+    padding-top: .5rem;
+    margin-bottom: .25rem;
+}
+.progreso-fijo {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: .6rem 1rem;
+    margin-bottom: 1rem;
+}
+.progreso-fijo .steps { flex-direction: row; flex-wrap: wrap; gap: .4rem 1.25rem; margin: 0; font-size: .85rem; }
 .panel-subtitle { font-size: .85rem; font-weight: 600; margin: 1rem 0 .5rem; }
 .lista-tablas { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .25rem; }
 .arbol { list-style: none; padding: 0; margin: 0 0 .75rem; font-size: .85rem; }
@@ -262,6 +278,21 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
     .grid-2 { grid-template-columns: 1fr; }
     .table { display: block; overflow-x: auto; }
 }
+
+/* ---------- Servidor PostgreSQL de destino (módulo 1, paso 1) ---------- */
+.servidor { border: 1px solid var(--line); border-radius: var(--radius); padding: .75rem 1rem; margin: 0 0 1rem; }
+.servidor legend { font-size: .85rem; font-weight: 600; padding: 0 .3rem; }
+.servidor > .muted { font-size: .85rem; margin: 0 0 .5rem; }
+.servidor-campos { display: grid; grid-template-columns: 2fr 1fr; gap: 0 .75rem; }
+.servidor .field-error { display: block; }
+.servidor .btn { margin-top: .25rem; }
+
+/* ---------- Reloj de la carga (módulo 1, paso 6) ---------- */
+.reloj-carga { margin-top: 1rem; padding: .75rem 1rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.reloj-linea { margin: 0 0 .5rem; display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap; }
+.reloj-tiempo { font-family: var(--mono); font-size: 1.1rem; }
+.reloj-barra { width: 100%; accent-color: var(--accent); }
+.reloj-queda { font-size: .85rem; }
 
 /* ---------- Prototipo de datos (módulo 1, paso 3) ---------- */
 .panel-ancho { margin-top: 1.25rem; }

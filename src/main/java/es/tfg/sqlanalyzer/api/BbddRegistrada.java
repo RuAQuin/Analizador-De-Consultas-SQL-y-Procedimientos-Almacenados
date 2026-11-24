@@ -17,7 +17,10 @@ public record BbddRegistrada(String nombre,
                              // Momento del registro en el repositorio.
                              OffsetDateTime registrada,
                              // Si la BBDD sigue existiendo en el servidor (se puede haber borrado a mano).
-                             boolean existe) implements Serializable {
+                             // Null en los servidores de otros equipos: no se guarda su contraseña, no se comprueba.
+                             Boolean existe,
+                             // «host:puerto» del PostgreSQL de otro equipo; vacío = el servidor de la aplicación.
+                             String servidor) implements Serializable {
 
     /** Tamaño del dump legible (KB, MB...). */
     public String tamano() {
@@ -27,5 +30,10 @@ public record BbddRegistrada(String nombre,
     /** Momento del registro en la zona horaria del equipo (PostgreSQL lo da en UTC). */
     public LocalDateTime registradaLocal() {
         return registrada.atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+    }
+
+    /** Dónde está la BBDD, para mostrarlo. */
+    public String donde() {
+        return servidor == null || servidor.isBlank() ? "Aplicación" : servidor;
     }
 }

@@ -116,6 +116,25 @@ def test_tablas_con_esquema():
     assert dep.orden == [TablaOrdenada("ventas.clientes", 0), TablaOrdenada("ventas.pedidos", 1)]
 
 
+def test_public_con_y_sin_esquema_es_la_misma_tabla():
+    # La tabla se declara con public. y las FK la nombran con y sin esquema: las dos la encuentran.
+    dep = analizar("""
+        CREATE TABLE public.granjas (id int PRIMARY KEY);
+        CREATE TABLE naves (id int PRIMARY KEY, granja_id int REFERENCES granjas(id));
+        CREATE TABLE public.lotes (nave_id int REFERENCES public.naves(id));
+    """)
+    assert dep.valido, dep.errores
+    assert dep.claves_foraneas == [ClaveForanea("naves", ("granja_id",), "granjas", ("id",)),
+                                   ClaveForanea("lotes", ("nave_id",), "naves", ("id",))]
+    assert niveles(dep) == [("granjas", 0), ("naves", 1), ("lotes", 2)]
+
+
+def test_public_y_sin_esquema_cuentan_como_la_misma_tabla_repetida():
+    dep = analizar("CREATE TABLE public.a (id int);\nCREATE TABLE a (id int);")
+    assert not dep.valido
+    assert "más de una vez" in dep.errores[0].mensaje
+
+
 cliente = TestClient(app)
 
 

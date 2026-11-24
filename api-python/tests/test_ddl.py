@@ -58,6 +58,11 @@ def test_tabla_con_esquema():
     assert parsear_ddl("CREATE TABLE ventas.pedidos (id int);").tablas == ["ventas.pedidos"]
 
 
+def test_el_esquema_public_no_forma_parte_del_nombre():
+    # Sin esquema la tabla se crea en public: «public.pedidos» y «pedidos» son la misma tabla.
+    assert parsear_ddl("CREATE TABLE public.pedidos (id int);").tablas == ["pedidos"]
+
+
 cliente = TestClient(app)
 
 

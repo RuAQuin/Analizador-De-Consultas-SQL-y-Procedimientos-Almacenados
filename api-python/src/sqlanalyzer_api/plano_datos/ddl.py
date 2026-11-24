@@ -43,8 +43,11 @@ def linea_columna(texto: str, posicion: int) -> tuple[int, int]:
 
 
 def nombre_tabla(relacion: ast.RangeVar) -> str:
-    """Devuelve el nombre de la tabla."""
-    return f"{relacion.schemaname}.{relacion.relname}" if relacion.schemaname else relacion.relname
+    """Devuelve el nombre de la tabla. Sin esquema, PostgreSQL la crea en public: «public.clientes» y
+    «clientes» son la misma tabla y las dos se nombran «clientes»."""
+    if relacion.schemaname and relacion.schemaname != "public": # Si su esquema no es public, "se mantiene".
+        return f"{relacion.schemaname}.{relacion.relname}"
+    return relacion.relname # Si su esquema es public, "se retira". Es igual a "no tener esquema".
 
 
 def parsear_ddl(ddl: str) -> ResultadoDdl:

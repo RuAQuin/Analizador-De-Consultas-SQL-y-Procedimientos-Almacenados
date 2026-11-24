@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -14,7 +15,8 @@ from pydantic import BaseModel, Field
 from .plano_datos import (FICHERO_DUMP, Conexion, analizar_bbdd, analizar_dependencias, crear_bbdd,
                           directorio_dumps, directorio_dumps_servidor, exportar_bbdd,
                           formar_arboles, generar_prototipo, insertar_datos,
-                          listar_registro, ordenar_arboles, parsear_ddl)
+                          listar_registro, ordenar_arboles, parsear_ddl, probar_servidor, progreso_insercion,
+                          restaurar_bbdd)
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
@@ -109,6 +111,14 @@ class RespuestaPrototipo(BaseModel):
     tablas: list[TablaPrototipoDto] = []
 
 
+# PostgreSQL de otro equipo de la red (paso 9: restaurar la BBDD en él).
+class ServidorDto(BaseModel):
+    host: str = Field(min_length=1, max_length=255)
+    puerto: int = Field(default=5432, ge=1, le=65535)
+    usuario: str = Field(min_length=1, max_length=63)
+    contrasena: str = Field(default="", max_length=200)
+
+
 class PeticionCreacion(PeticionPrototipo):
     # Nombre de la base de datos que se va a crear.
     nombre: str = Field(max_length=63)
@@ -185,19 +195,36 @@ class RespuestaExportacion(BaseModel):
 
 # Una BBDD registrada.
 class BbddRegistradaDto(BaseModel):
+    # «host:puerto» del PostgreSQL de otro equipo donde se ha restaurado (paso 9); vacío = la aplicación.
+    servidor: str = ""
     nombre: str
     tablas: int
     total_filas: int
     fichero: str
     bytes: int
     registrada: datetime
-    # Si la BBDD sigue existiendo en el servidor.
-    existe: bool
+    # Si la BBDD sigue existiendo en el servidor. None en los servidores de otros equipos (no se comprueba).
+    existe: bool | None = None
 
 
 def conexion() -> Conexion:
     """Conexión con PostgreSQL (los tests la sustituyen)."""
     return Conexion.desde_entorno()
+
+
+# Nombres que, para el usuario, son «mi propio equipo». Dentro de Docker significan el contenedor de la API:
+# si HOST_LOCAL está definida (docker-compose.yml: host.docker.internal), se cambian por ella.
+_LOCALES = {"localhost", "127.0.0.1", "::1"}
+
+
+def _destino(servidor: ServidorDto, con: Conexion) -> Conexion:
+    """Conexión con el PostgreSQL de otro equipo de la red. Se mantienen las BBDD reservadas de la aplicación
+    (repositorio) para no usarlas nunca."""
+    host = servidor.host.strip()
+    if host.lower() in _LOCALES and os.environ.get("HOST_LOCAL"):
+        host = os.environ["HOST_LOCAL"] # Traducción de localhost.
+    return replace(con, host=host, puerto=servidor.puerto, usuario=servidor.usuario,
+                   contrasena=servidor.contrasena, bd_mantenimiento="postgres")
 
 
 def dumps() -> Path:
@@ -294,6 +321,27 @@ def insertar(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> R
     )
 
 
+# Progreso de una inserción en marcha (reloj de la carga en la WebApp).
+class ProgresoInsercionDto(BaseModel):
+    # «generando» (tuplas) o «escribiendo» (COPY tabla a tabla).
+    fase: str
+    # Tabla que se está escribiendo (None mientras se generan las tuplas).
+    tabla: str | None = None
+    # Filas hechas en la fase actual, de total (las filas de todas las tablas).
+    hechas: int
+    total: int
+
+
+@app.get("/bbdd/insertar/progreso/{nombre}", response_model=ProgresoInsercionDto)
+def progreso(nombre: str) -> ProgresoInsercionDto:
+    """Paso 6: cómo va la inserción en marcha en «nombre». 404 si no hay ninguna (no ha empezado o ya ha
+    terminado). Se puede consultar mientras dura POST /bbdd/insertar: FastAPI atiende cada petición en un hilo."""
+    p = progreso_insercion(nombre)
+    if p is None:
+        raise HTTPException(404, f"No hay ninguna inserción en marcha en «{nombre}»")
+    return ProgresoInsercionDto(fase=p.fase, tabla=p.tabla, hechas=p.hechas, total=p.total)
+
+
 @app.post("/bbdd/analizar", response_model=RespuestaAnalisis)
 def analizar(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> RespuestaAnalisis:
     """Paso 7: ANALYZE de cada tabla en el orden de Kahn para cerrar la carga, de modo que el planificador
@@ -341,8 +389,70 @@ def registro(con: Conexion = Depends(conexion)) -> list[BbddRegistradaDto]:
         registradas = listar_registro(con)
     except psycopg.Error as e:
         raise HTTPException(503, f"No se ha podido leer el registro: {str(e).strip().splitlines()[-1]}") from e
-    return [BbddRegistradaDto(nombre=r.nombre, tablas=r.tablas, total_filas=r.total_filas, fichero=r.fichero,
-                              bytes=r.bytes, registrada=r.registrada, existe=r.existe) for r in registradas]
+    return [BbddRegistradaDto(servidor=r.servidor, nombre=r.nombre, tablas=r.tablas, total_filas=r.total_filas,
+                              fichero=r.fichero, bytes=r.bytes, registrada=r.registrada, existe=r.existe)
+            for r in registradas]
+
+
+# Resultado de «Probar conexión» con el PostgreSQL de otro equipo.
+class RespuestaServidor(BaseModel):
+    valido: bool
+    errores: list[ErrorDdlDto]
+    # «host:puerto» con el que se ha conectado la API.
+    servidor: str
+    # Versión de PostgreSQL del servidor.
+    version: str | None = None
+
+
+@app.post("/bbdd/servidor/probar", response_model=RespuestaServidor)
+def probar(servidor: ServidorDto, con: Conexion = Depends(conexion)) -> RespuestaServidor:
+    """Paso 9: comprueba que la API llega al PostgreSQL de otro equipo y que el usuario puede crear BBDD."""
+    prueba = probar_servidor(_destino(servidor, con))
+    return RespuestaServidor(valido=prueba.valido, errores=_errores(prueba.errores), servidor=prueba.servidor,
+                             version=prueba.version)
+
+
+# Paso 9: restaurar la BBDD en el PostgreSQL de otro equipo.
+class PeticionRestauracion(BaseModel):
+    # BBDD exportada en el paso 8 y su respaldo (<bbdd>_<AAAAMMDD>_<HHMMSS>.dump).
+    nombre: str = Field(max_length=63)
+    fichero: str = Field(max_length=100)
+    servidor: ServidorDto
+
+
+class TablaRestauradaDto(BaseModel):
+    tabla: str
+    filas: int
+
+
+class RespuestaRestauracion(BaseModel):
+    valido: bool
+    errores: list[ErrorDdlDto]
+    bbdd: str | None = None
+    # «host:puerto» del otro servidor y su versión de PostgreSQL.
+    servidor: str | None = None
+    version: str | None = None
+    fichero: str | None = None
+    # Filas de cada tabla tras el ANALYZE en el otro servidor.
+    tablas: list[TablaRestauradaDto] = []
+    segundos: float = 0.0
+
+
+@app.post("/bbdd/restaurar", response_model=RespuestaRestauracion)
+def restaurar(peticion: PeticionRestauracion, con: Conexion = Depends(conexion),
+              directorio: Path = Depends(dumps)) -> RespuestaRestauracion:
+    """Paso 9: pg_restore --create del respaldo del paso 8 en el PostgreSQL de otro equipo, ANALYZE y registro
+    de la copia como BBDD objetivo de ese servidor."""
+    # Errores relacionados con el fichero.
+    if not FICHERO_DUMP.match(peticion.fichero) or not peticion.fichero.endswith(".dump"):
+        return RespuestaRestauracion(valido=False, errores=[ErrorDdlDto(
+            mensaje=f"«{peticion.fichero}» no es un respaldo del paso 8 (.dump)")])
+    # Restauración de la BBDD.
+    r = restaurar_bbdd(peticion.nombre, directorio / peticion.fichero, _destino(peticion.servidor, con), con)
+    return RespuestaRestauracion(valido=r.valido, errores=_errores(r.errores), bbdd=r.bbdd, servidor=r.servidor,
+                                 version=r.version, fichero=r.fichero,
+                                 tablas=[TablaRestauradaDto(tabla=t.tabla, filas=t.filas) for t in r.tablas],
+                                 segundos=r.segundos)
 
 
 @app.get("/bbdd/dumps/{fichero}")

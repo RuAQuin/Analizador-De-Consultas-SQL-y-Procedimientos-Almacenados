@@ -55,6 +55,30 @@ class Conexion:
         return psycopg.connect(host=self.host, port=self.puerto, user=self.usuario, password=self.contrasena,
                                dbname=bd, autocommit=autocommit, connect_timeout=5) # Timeout de 5 segundos para no quedarse colgado si el servidor no responde.
 
+    @property
+    def servidor(self) -> str:
+        """«host:puerto», para los mensajes y el registro."""
+        return f"{self.host}:{self.puerto}"
+
+    def __repr__(self) -> str:
+        # Sin la contraseña: así no aparece nunca en los registros ni en las trazas de error.
+        return f"Conexion({self.usuario}@{self.servidor})"
+
+
+def pista_conexion(error: psycopg.Error) -> str:
+    """Qué revisar cuando no se puede conectar con un servidor (sobre todo el PostgreSQL de otro equipo)."""
+    texto = str(error).lower()
+    if "password authentication failed" in texto:
+        return "el usuario o la contraseña no son correctos"
+    if "no pg_hba.conf entry" in texto:
+        return "el servidor no acepta conexiones desde este equipo: añade una línea en su pg_hba.conf"
+    if "could not translate host name" in texto or "name or service not known" in texto:
+        return "no se encuentra ese equipo en la red: revisa el host"
+    if "connection refused" in texto or "timeout expired" in texto or "timed out" in texto:
+        return ("el servidor no responde: comprueba que PostgreSQL esté arrancado, que escuche en la red"
+                " (listen_addresses = '*'), el puerto y el firewall")
+    return ""
+
 
 @dataclass(frozen=True)
 class TablaCreada:
@@ -66,7 +90,7 @@ class TablaCreada:
 @dataclass(frozen=True)
 class Creacion:
     bbdd: str | None = None # Nombre de la BBDD. Si va mal queda en None y devuelve errores; si va bien devuelve los esquemas y las tablas.
-    esquemas: list[str] = field(default_factory=list)
+    esquemas: list[str] = field(default_factory=list) # Public, avicola...
     # En el orden en que se han creado (Kahn).
     tablas: list[TablaCreada] = field(default_factory=list)
     errores: list[ErrorDdl] = field(default_factory=list) #
@@ -121,6 +145,43 @@ def _mensaje(error: psycopg.Error) -> str:
     return (diag.message_primary if diag and diag.message_primary else str(error).strip().splitlines()[0])
 
 
+def _sin_conexion(conexion: Conexion, error: psycopg.Error) -> str:
+    """Mensaje cuando no se puede conectar: servidor, error de PostgreSQL y qué revisar."""
+    pista = pista_conexion(error)
+    # Imprime la pista obtenida en la función anterior.
+    return (f"No se ha podido conectar con PostgreSQL ({conexion.servidor}): {_mensaje(error)}"
+            + (f". Posible causa: {pista}" if pista else ""))
+
+
+@dataclass(frozen=True)
+class PruebaServidor:
+    """Resultado de «Probar conexión» con un servidor PostgreSQL."""
+    servidor: str
+    version: str | None = None # Versión de PostgreSQL (server_version).
+    errores: list[ErrorDdl] = field(default_factory=list)
+
+    @property
+    def valido(self) -> bool:
+        return not self.errores
+
+
+def probar_servidor(conexion: Conexion) -> PruebaServidor:
+    """Se conecta al servidor y comprueba que el usuario puede crear bases de datos (CREATEDB o superusuario)."""
+    try:
+        with conexion.conectar(conexion.bd_mantenimiento, autocommit=True) as c:
+            version, crea = c.execute("""SELECT current_setting('server_version'), rolcreatedb OR rolsuper
+                                         FROM pg_roles WHERE rolname = current_user""").fetchone()
+    except psycopg.OperationalError as e:
+        return PruebaServidor(conexion.servidor, errores=[ErrorDdl(_sin_conexion(conexion, e))])
+    except psycopg.Error as e:
+        return PruebaServidor(conexion.servidor, errores=[ErrorDdl(f"Error en {conexion.servidor}: {_mensaje(e)}")])
+    if not crea:
+        return PruebaServidor(conexion.servidor, version, [ErrorDdl(
+            f"El usuario «{conexion.usuario}» no puede crear bases de datos en {conexion.servidor}: en ese servidor,"
+            f" ejecuta ALTER ROLE {conexion.usuario} CREATEDB")])
+    return PruebaServidor(conexion.servidor, version)
+
+
 def crear_bbdd(nombre: str, sentencias: tuple[ast.RawStmt, ...], dependencias: Dependencias,
                conexion: Conexion) -> Creacion:
     """Pasos 4 y 5: revisa el nombre, crea la BBDD y crea sus tablas en el orden de Kahn."""
@@ -143,8 +204,7 @@ def crear_bbdd(nombre: str, sentencias: tuple[ast.RawStmt, ...], dependencias: D
         return Creacion(errores=[ErrorDdl(f"Ya existe una base de datos «{nombre}» en el servidor: elige otro nombre")])
     # No se puede conectar con el servidor.
     except psycopg.OperationalError as e:
-        return Creacion(errores=[ErrorDdl(f"No se ha podido conectar con PostgreSQL ({conexion.host}:"
-                                          f"{conexion.puerto}): {_mensaje(e)}")])
+        return Creacion(errores=[ErrorDdl(_sin_conexion(conexion, e))])
     # Cualquier otro error (por ejemplo, falta de permisos).
     except psycopg.Error as e:
         return Creacion(errores=[ErrorDdl(f"No se ha podido crear la base de datos «{nombre}»: {_mensaje(e)}")])

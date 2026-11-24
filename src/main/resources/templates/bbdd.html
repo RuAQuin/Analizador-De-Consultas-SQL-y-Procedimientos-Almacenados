@@ -12,7 +12,23 @@
             <p class="muted">Escribe el DDL de las tablas, define el prototipo de datos y genera la base de datos.</p>
         </header>
 
-        <div th:replace="~{fragments/layout :: mensajes}"></div>
+        <!-- Pasos realizados y mensaje del último paso: fijos arriba para verlos siempre al desplazarse. -->
+        <div class="cabecera-fija">
+            <nav class="progreso-fijo" aria-label="Pasos realizados">
+                <ol class="steps">
+                    <li th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>DDL parseado con pglast</li>
+                    <li th:classappend="${ordenCarga != null} ? 'step-done'"><span class="step-dot"></span>Árbol de agrupación</li>
+                    <li th:classappend="${prototipo != null} ? 'step-done'"><span class="step-dot"></span>Prototipo de datos</li>
+                    <li th:classappend="${creacion != null} ? 'step-done'"><span class="step-dot"></span>Revisión y confirmación · CREATE DATABASE / CREATE TABLE</li>
+                    <li th:classappend="${insercion != null} ? 'step-done'"><span class="step-dot"></span>Inserción de datos</li>
+                    <li th:classappend="${analisis != null} ? 'step-done'"><span class="step-dot"></span>ANALYZE</li>
+                    <li th:classappend="${exportacion != null} ? 'step-done'"><span class="step-dot"></span>pg_dump y registro</li>
+                <li th:classappend="${restauracion != null} ? 'step-done'"><span class="step-dot"></span>Restaurar en otro servidor (opcional)</li>
+                </ol>
+            </nav>
+
+            <div th:replace="~{fragments/layout :: mensajes}"></div>
+        </div>
 
         <div class="grid-2">
             <form th:action="@{/bbdd}" th:object="${form}" method="post" class="panel form" novalidate>
@@ -38,18 +54,6 @@
 
             <section class="panel">
                 <h2 class="panel-title">Progreso</h2>
-                <ol class="steps">
-                    <li th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>DDL parseado con pglast</li>
-                    <li><span class="step-dot"></span>Árbol de agrupación</li>
-                    <li class="step-sub" th:classappend="${orden != null} ? 'step-done'"><span class="step-dot"></span>FK leídas y orden de Kahn</li>
-                    <li class="step-sub" th:classappend="${arboles != null} ? 'step-done'"><span class="step-dot"></span>FK de agrupación y árboles</li>
-                    <li class="step-sub" th:classappend="${ordenCarga != null} ? 'step-done'"><span class="step-dot"></span>Kahn entre árboles</li>
-                    <li th:classappend="${prototipo != null} ? 'step-done'"><span class="step-dot"></span>Prototipo de datos</li>
-                    <li th:classappend="${creacion != null} ? 'step-done'"><span class="step-dot"></span>Revisión y confirmación · CREATE DATABASE / CREATE TABLE</li>
-                    <li th:classappend="${insercion != null} ? 'step-done'"><span class="step-dot"></span>Inserción de datos</li>
-                    <li th:classappend="${analisis != null} ? 'step-done'"><span class="step-dot"></span>ANALYZE</li>
-                    <li th:classappend="${exportacion != null} ? 'step-done'"><span class="step-dot"></span>pg_dump y registro</li>
-                </ol>
 
                 <div th:if="${orden != null}">
                     <h3 class="panel-subtitle">Orden de creación (Kahn)</h3>
@@ -244,10 +248,19 @@
                     dentro de cada árbol, en profundidad (cada fila seguida de sus filas hijas). Después se escriben
                     tabla a tabla en el orden de Kahn. Si alguna fila falla, no se inserta nada.
                 </p>
-                <form th:action="@{/bbdd/insertar}" method="post">
+                <form th:action="@{/bbdd/insertar}" method="post" th:attr="data-progreso=@{/bbdd/insertar/progreso}">
                     <button type="submit" class="btn btn-primary"
                             th:text="|Insertar ${#aggregates.sum(prototipo.tablas.![filas])} filas|">Insertar las filas</button>
                 </form>
+                <!-- Reloj de la carga: carga.js lo muestra si la inserción tarda más de 2 s. -->
+                <div id="reloj-carga" class="reloj-carga" role="status" aria-live="polite" hidden>
+                    <p class="reloj-linea">
+                        <strong class="reloj-tiempo">0:00</strong>
+                        <span class="reloj-texto">Preparando la carga…</span>
+                    </p>
+                    <progress class="reloj-barra"></progress>
+                    <p class="muted reloj-queda"></p>
+                </div>
             </div>
 
             <div th:if="${insercion != null}">
@@ -386,11 +399,12 @@
                 <p class="muted" th:if="${#lists.isEmpty(registro)}">No se ha podido leer el registro.</p>
                 <table class="table" th:unless="${#lists.isEmpty(registro)}">
                     <thead>
-                        <tr><th>Base de datos</th><th>Tablas</th><th>Filas</th><th>Último dump</th><th>Registrada</th><th>En el servidor</th></tr>
+                        <tr><th>Base de datos</th><th>Servidor</th><th>Tablas</th><th>Filas</th><th>Último dump</th><th>Registrada</th><th>¿Existe?</th></tr>
                     </thead>
                     <tbody>
                         <tr th:each="r : ${registro}">
                             <td class="code" th:text="${r.nombre}">tienda_demo</td>
+                            <td class="code" th:text="${r.donde()}">Aplicación</td>
                             <td th:text="${r.tablas}">2</td>
                             <td th:text="${r.totalFilas}">10</td>
                             <td>
@@ -398,14 +412,96 @@
                                 <span class="muted" th:text="|(${r.tamano()})|">(12.4 KB)</span>
                             </td>
                             <td th:text="${#temporals.format(r.registradaLocal(), 'dd/MM/yyyy HH:mm')}">18/11/2026 10:15</td>
-                            <td th:text="${r.existe} ? 'Sí' : 'Borrada'">Sí</td>
+                            <td th:text="${r.existe == null} ? 'No comprobado' : (${r.existe} ? 'Sí' : 'Borrada')">Sí</td>
                         </tr>
                     </tbody>
                 </table>
                 <p class="muted">Con esto termina el módulo 1. Para crear otra base de datos, valida un DDL nuevo.</p>
             </div>
         </section>
+
+        <section class="panel panel-ancho" id="restauracion" th:if="${exportacion != null}">
+            <h2 class="panel-title">9. Restaurar en otro servidor <span class="muted">(opcional)</span></h2>
+
+            <div class="alert alert-error" role="alert"
+                 th:if="${erroresRestauracion != null and !#lists.isEmpty(erroresRestauracion)}">
+                <strong>No se ha restaurado la base de datos</strong>
+                <ul class="lista-avisos">
+                    <li th:each="e : ${erroresRestauracion}" th:text="${e}">aviso</li>
+                </ul>
+            </div>
+
+            <p class="muted">
+                Lleva la base de datos al PostgreSQL de otro equipo de la red: la API restaura allí el respaldo del
+                paso 8 (<span class="code" th:text="${exportacion.fichero}">tienda_demo.dump</span>) con
+                <span class="code">pg_restore --create</span> y ejecuta ANALYZE, porque el respaldo no lleva las
+                estadísticas. En ese equipo, PostgreSQL debe aceptar conexiones de la red (listen_addresses,
+                pg_hba.conf y firewall), el usuario necesita permiso para crear bases de datos (CREATEDB) y la
+                versión debe ser igual o mayor que la de la aplicación. La base de datos no debe existir allí.
+            </p>
+
+            <form th:action="@{/bbdd/restaurar}" th:object="${servidorForm}" method="post" class="form" novalidate>
+                <fieldset class="servidor">
+                    <legend>PostgreSQL del otro equipo</legend>
+                    <div class="servidor-campos">
+                        <label class="field">
+                            <span>Host (IP del equipo)</span>
+                            <input type="text" th:field="*{host}" placeholder="192.168.1.57"
+                                   th:classappend="${#fields.hasErrors('host')} ? 'invalid'">
+                        </label>
+                        <label class="field">
+                            <span>Puerto</span>
+                            <input type="number" min="1" max="65535" th:field="*{puerto}"
+                                   th:classappend="${#fields.hasErrors('puerto')} ? 'invalid'">
+                        </label>
+                        <label class="field">
+                            <span>Usuario</span>
+                            <input type="text" th:field="*{usuario}" placeholder="postgres" autocomplete="off"
+                                   th:classappend="${#fields.hasErrors('usuario')} ? 'invalid'">
+                        </label>
+                        <label class="field">
+                            <span>Contraseña</span>
+                            <!-- Sin th:field: la contraseña no se vuelve a escribir en la página. Vacía = la ya indicada. -->
+                            <input type="password" id="contrasena" name="contrasena" autocomplete="new-password"
+                                   th:placeholder="${contrasenaGuardada} ? '(la ya indicada)' : ''">
+                        </label>
+                    </div>
+                    <small class="field-error" th:each="err : ${#fields.errors('host')}" th:text="${err}"></small>
+                    <small class="field-error" th:each="err : ${#fields.errors('puerto')}" th:text="${err}"></small>
+                    <small class="field-error" th:each="err : ${#fields.errors('usuario')}" th:text="${err}"></small>
+                </fieldset>
+                <div class="actions">
+                    <button type="submit" class="btn btn-secondary" th:formaction="@{/bbdd/servidor/probar}">Probar conexión</button>
+                    <button type="submit" class="btn btn-primary">Restaurar en ese servidor</button>
+                </div>
+            </form>
+
+            <div th:if="${restauracion != null}">
+                <h3 class="panel-subtitle">Última restauración</h3>
+                <p>
+                    <strong class="code" th:text="${restauracion.bbdd}">tienda_demo</strong> restaurada en
+                    <strong class="code" th:text="${restauracion.servidor}">192.168.1.57:5432</strong>
+                    <span class="muted" th:text="|(PostgreSQL ${restauracion.version}, ${restauracion.segundos} s)|">(PostgreSQL 17)</span>.
+                </p>
+                <table class="table">
+                    <thead><tr><th>#</th><th>Tabla</th><th>Filas (tras ANALYZE)</th></tr></thead>
+                    <tbody>
+                        <tr th:each="t, it : ${restauracion.tablas}">
+                            <td th:text="${it.count}">1</td>
+                            <td class="code" th:text="${t.tabla}">clientes</td>
+                            <td th:text="${t.filas}">3</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="muted">
+                    Queda registrada como BBDD objetivo de ese servidor (ver el registro del paso 8). Puedes comprobarlo
+                    con el psql de la API (pide la contraseña):
+                    <span class="code" th:text="|docker exec -it sqlanalyzer-api psql -h ${#strings.substringBefore(restauracion.servidor, ':')} -p ${#strings.substringAfter(restauracion.servidor, ':')} -U ${servidorForm.usuario} -d ${restauracion.bbdd} -c &quot;\dt&quot;|">psql</span>
+                </p>
+            </div>
+        </section>
     </main>
 </div>
+<script th:src="@{/js/carga.js}" defer></script>
 </body>
 </html>

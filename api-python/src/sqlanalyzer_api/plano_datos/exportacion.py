@@ -44,19 +44,36 @@ from .insercion import _identificador
 # Se aceptan también los .sql (script) de las exportaciones anteriores, para poder descargarlos.
 FICHERO_DUMP = re.compile(r"^[a-z_][a-z0-9_]{0,62}_\d{8}_\d{6}\.(dump|sql)$")
 
+# servidor: «host:puerto» del PostgreSQL de otro equipo donde se ha restaurado la BBDD (paso 9);
+# vacío ('') = el servidor de la aplicación.
+# Dos servidores pueden tener una BBDD con el mismo nombre: la clave es (servidor, nombre).
 _TABLA_REGISTRO = """
     CREATE TABLE IF NOT EXISTS bbdd_objetivo (
-        nombre       text PRIMARY KEY,
+        servidor     text NOT NULL DEFAULT '',
+        nombre       text NOT NULL,
         ddl          text NOT NULL,
         filas        jsonb NOT NULL,
         tablas       int NOT NULL,
         total_filas  bigint NOT NULL,
         fichero_dump text NOT NULL,
         bytes_dump   bigint NOT NULL,
-        registrada   timestamptz NOT NULL DEFAULT now()
+        registrada   timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (servidor, nombre)
     )
 """
 # Nota: las filas estarían en el formato: {"pedidos": 8400, "clientes": 1500, "productos": 320}
+
+# Registros creados antes de que existiera la columna servidor (clave solo «nombre»): se adaptan sin perder filas.
+_ADAPTAR_REGISTRO = """
+    ALTER TABLE bbdd_objetivo ADD COLUMN IF NOT EXISTS servidor text NOT NULL DEFAULT '';
+    DO $$ BEGIN
+        IF (SELECT array_length(conkey, 1) FROM pg_constraint
+            WHERE conrelid = 'bbdd_objetivo'::regclass AND contype = 'p') = 1 THEN
+            ALTER TABLE bbdd_objetivo DROP CONSTRAINT bbdd_objetivo_pkey, ADD PRIMARY KEY (servidor, nombre);
+        END IF;
+    END $$;
+"""
+
 
 
 @dataclass(frozen=True)
@@ -81,14 +98,17 @@ class Exportacion:
 @dataclass(frozen=True)
 class BbddRegistrada:
     """Una fila de bbdd_objetivo. Mismos campos que el CREATE TABLE, exceptuando el DDL y el nº de filas."""
+    # «host:puerto» del servidor de otro equipo; vacío = el servidor de la aplicación.
+    servidor: str
     nombre: str
     tablas: int
     total_filas: int
     fichero: str
     bytes: int
     registrada: datetime
-    # Si la BBDD sigue existiendo en el servidor (se puede haber borrado a mano).
-    existe: bool
+    # Si la BBDD sigue existiendo en el servidor (se puede haber borrado a mano). None en los servidores de
+    # otros equipos: no se guarda su contraseña, así que no se puede comprobar.
+    existe: bool | None
 
 
 def directorio_dumps() -> Path:
@@ -131,9 +151,18 @@ def _pg_dump(c: psycopg.Connection, nombre: str, ruta: str, conexion: Conexion) 
     # Si algo falla, se borra el fichero.
 
 
+def _adaptar_registro(c: psycopg.Connection) -> None:
+    """Crea la tabla del registro si no existe y adapta la de versiones anteriores (columna servidor)."""
+    c.execute(_TABLA_REGISTRO)
+    c.execute(_ADAPTAR_REGISTRO)
+
+
 def _registrar(nombre: str, ddl: str, filas: dict[str, int], fichero: str, tamano: int,
-               conexion: Conexion) -> datetime:
-    """8.2: apunta la BBDD en el repositorio (si ya estaba, se actualiza con el último dump)."""
+               conexion: Conexion, servidor: str = "") -> datetime:
+    """8.2: apunta la BBDD en el repositorio (si ya estaba, se actualiza con el último dump).
+
+    ``conexion`` es la del servidor de la aplicación (donde está el repositorio); ``servidor``, el
+    «host:puerto» de otro equipo donde se ha restaurado la BBDD (paso 9); vacío = la aplicación."""
     # Conexión a la BBDD de mantenimiento. autocommit=True porque CREATE DATABASE no puede ir en medio de una transacción.
     with conexion.conectar(conexion.bd_mantenimiento, autocommit=True) as c:
         # Crea la BBDD repositorio si no existe
@@ -141,16 +170,16 @@ def _registrar(nombre: str, ddl: str, filas: dict[str, int], fichero: str, taman
             c.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(conexion.bd_repositorio)))
     # Conexión a la BBDD repositorio.
     with conexion.conectar(conexion.bd_repositorio) as c:
-        c.execute(_TABLA_REGISTRO) # Se crea la Tabla si no existe ya.
+        _adaptar_registro(c) # Se crea la tabla si no existe ya (o se adapta).
         # Se añade la BBDD que se respalda con sus datos.
         return c.execute("""
-            INSERT INTO bbdd_objetivo (nombre, ddl, filas, tablas, total_filas, fichero_dump, bytes_dump)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (nombre) DO UPDATE SET ddl = EXCLUDED.ddl, filas = EXCLUDED.filas, tablas = EXCLUDED.tablas,
-                total_filas = EXCLUDED.total_filas, fichero_dump = EXCLUDED.fichero_dump,
+            INSERT INTO bbdd_objetivo (servidor, nombre, ddl, filas, tablas, total_filas, fichero_dump, bytes_dump)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (servidor, nombre) DO UPDATE SET ddl = EXCLUDED.ddl, filas = EXCLUDED.filas,
+                tablas = EXCLUDED.tablas, total_filas = EXCLUDED.total_filas, fichero_dump = EXCLUDED.fichero_dump,
                 bytes_dump = EXCLUDED.bytes_dump, registrada = now()
             RETURNING registrada""", # Devuelve la fecha de registro.
-            (nombre, ddl, json.dumps(filas), len(filas), sum(filas.values()), fichero, tamano)).fetchone()[0]
+            (servidor, nombre, ddl, json.dumps(filas), len(filas), sum(filas.values()), fichero, tamano)).fetchone()[0]
 
 
 def _detalle(e: psycopg.Error) -> str:
@@ -217,10 +246,11 @@ def listar_registro(conexion: Conexion) -> list[BbddRegistrada]:
         # Si no exista la BBDD objetivo devuelve []
         if c.execute("SELECT to_regclass('bbdd_objetivo')").fetchone()[0] is None:
             return []
-        # Lee las filas
+        _adaptar_registro(c) # Registros de versiones anteriores, sin la columna servidor.
+        # Lee las filas. Solo se puede comprobar si existen las BBDD del servidor de la aplicación.
         filas = c.execute("""
-            SELECT nombre, tablas, total_filas, fichero_dump, bytes_dump, registrada,
-                   EXISTS (SELECT 1 FROM pg_database d WHERE d.datname = r.nombre)
+            SELECT servidor, nombre, tablas, total_filas, fichero_dump, bytes_dump, registrada,
+                   CASE WHEN servidor = '' THEN EXISTS (SELECT 1 FROM pg_database d WHERE d.datname = r.nombre) END
             FROM bbdd_objetivo r ORDER BY registrada DESC""").fetchall()
     # Se convierte cada fila en un objeto por posición.
     return [BbddRegistrada(*f) for f in filas]

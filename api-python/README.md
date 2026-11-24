@@ -46,10 +46,13 @@ uvicorn sqlanalyzer_api.app:app --reload
 | POST | `/bbdd/prototipo` | Paso 3: comprueba el número de filas de cada tabla y devuelve una muestra de los datos |
 | POST | `/bbdd/crear` | Pasos 4 y 5: revisa el nombre de la BBDD contra el servidor, la crea y crea sus tablas en el orden de Kahn |
 | POST | `/bbdd/insertar` | Paso 6: genera las tuplas siguiendo el diagrama y las escribe tabla a tabla en el orden de Kahn |
+| GET | `/bbdd/insertar/progreso/{nombre}` | Paso 6: cómo va la inserción en marcha (reloj de la carga) |
 | POST | `/bbdd/analizar` | Paso 7: ANALYZE de cada tabla en el orden de Kahn para cerrar la carga |
 | POST | `/bbdd/exportar` | Paso 8: respaldo con COPY ... TO PROGRAM 'pg_dump -F c' y registro como BBDD objetivo |
 | GET | `/bbdd/registro` | Paso 8.2: BBDD objetivo registradas, la última primero |
 | GET | `/bbdd/dumps/{fichero}` | Paso 8.1: descarga un dump |
+| POST | `/bbdd/servidor/probar` | Paso 9: prueba la conexión con el PostgreSQL de otro equipo de la red |
+| POST | `/bbdd/restaurar` | Paso 9: restaura el respaldo del paso 8 en el PostgreSQL de otro equipo |
 
 `POST /bbdd/ddl` recibe `{"ddl": "CREATE TABLE ..."}` y siempre responde 200:
 
@@ -238,9 +241,15 @@ docker exec -it sqlanalyzer-postgres psql -U postgres -c "DROP DATABASE tienda_d
     trigger...) no se inserta nada y el error indica la tabla y la fila. Si alguna tabla ya tiene filas no
     se inserta (los datos se insertan una vez, en la BBDD recién creada).
   - 300.000 filas (100.000 por tabla) tardan ~4,5 s.
+  - **Progreso (reloj de la carga):** mientras dura `POST /bbdd/insertar`,
+    `GET /bbdd/insertar/progreso/{nombre}` devuelve la fase (`generando` las tuplas o `escribiendo` con
+    COPY), la tabla que se escribe y las filas hechas de `total` (se actualiza cada 1.000 filas). Da 404
+    si no hay ninguna inserción en marcha en esa BBDD (aún no ha empezado o ya ha terminado). El estado
+    está en memoria (`progreso_insercion`): sirve porque la API corre en un solo proceso. La WebApp lo
+    consulta cada segundo (`static/js/carga.js`) si la inserción tarda más de 2 s.
   - **Pendiente:** la inserción es síncrona. El esquema funcional prevé workers asíncronos para las tareas
     largas; con el límite de 100.000 filas por tabla basta, pero con muchas tablas grandes convendría
-    pasarla a un worker con progreso.
+    pasarla a un worker.
 
 ```json
 {"nombre": "tienda_demo", "ddl": "CREATE TABLE ...", "filas": {"clientes": 3, "compras": 7}}
@@ -334,6 +343,33 @@ Para restaurarlo (`--create` crea la BBDD, así que no debe existir). El dump ya
 ```bash
 docker exec -it sqlanalyzer-postgres pg_restore -U postgres -d postgres --create /datos/dumps/tienda_demo_20261121_153642.dump
 ```
+
+### Restaurar en otro servidor (paso 9, opcional)
+
+La BBDD se genera siempre en el servidor de la aplicación (pasos 1 a 8). Para llevarla al PostgreSQL de otro
+equipo de la red se aprovecha el respaldo del paso 8 (`plano_datos/restauracion.py`):
+
+- `POST /bbdd/servidor/probar` (`{"host", "puerto", "usuario", "contrasena"}`) comprueba que la API llega al
+  servidor y que el usuario puede crear BBDD (`CREATEDB` o superusuario), con una pista si falla
+  (contraseña, `pg_hba.conf`, `listen_addresses`, firewall...).
+- `POST /bbdd/restaurar` (`{"nombre", "fichero", "servidor"}`):
+  1. Solo acepta el `.dump` registrado en el paso 8 para esa BBDD, y la BBDD no debe existir en el otro servidor.
+  2. `pg_restore --create --no-owner --no-privileges --exit-on-error` contra el otro servidor
+     (`postgresql-client` del repositorio oficial en la imagen de la API; la contraseña va en `PGPASSWORD`).
+     `--no-owner --no-privileges`: los objetos pasan a ser del usuario con el que se conecta. Si falla a medias,
+     se borra lo restaurado.
+  3. `ANALYZE`: el dump no lleva las estadísticas del planificador.
+  4. Registro: la copia queda como BBDD objetivo de ese servidor (columna `servidor` = «host:puerto», clave
+     `(servidor, nombre)`; vacío = el servidor de la aplicación). Los registros anteriores se adaptan solos.
+     «¿Existe?» solo se comprueba en el servidor de la aplicación (`null` en los demás: no se guarda su contraseña).
+- La API no guarda la contraseña (la WebApp la tiene solo en la sesión del usuario). «localhost» es el equipo del
+  usuario, no el contenedor de la API: se cambia por `HOST_LOCAL` (`host.docker.internal` en `docker-compose.yml`).
+
+En el otro equipo, PostgreSQL debe escuchar en la red (`listen_addresses = '*'`), aceptar al equipo de la API
+en `pg_hba.conf`, tener el puerto abierto en el firewall, un usuario con `CREATEDB` y una versión igual o mayor
+que la del servidor de la aplicación (17). Para probarlo sin otro equipo,
+`docker compose --profile pruebas up -d otro-equipo` arranca un PostgreSQL 17 en el puerto 5434
+(`postgres` / `otroequipo`).
 
 ## Tests
 
