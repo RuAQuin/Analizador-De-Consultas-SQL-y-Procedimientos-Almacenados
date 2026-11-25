@@ -24,7 +24,7 @@ public class UsuarioForm {
     private String password;
 
     @NotNull(message = "Selecciona un rol")
-    private Rol rol = Rol.ANALYST;
+    private Rol rol = Rol.USUARIO;
 
     private boolean habilitado = true;
 }

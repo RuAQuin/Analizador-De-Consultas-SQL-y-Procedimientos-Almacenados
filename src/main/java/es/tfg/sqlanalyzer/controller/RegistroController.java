@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-/** Registro público de nuevas cuentas (siempre con rol ANALYST). */
+/** Registro público de nuevas cuentas (siempre con rol USUARIO: solo sus BBDD). */
 @Controller
 public class RegistroController {
 

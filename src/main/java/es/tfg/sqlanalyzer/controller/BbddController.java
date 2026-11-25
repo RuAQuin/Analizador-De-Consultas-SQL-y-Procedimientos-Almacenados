@@ -3,6 +3,7 @@ package es.tfg.sqlanalyzer.controller;
 import es.tfg.sqlanalyzer.api.AnalisisBbdd;
 import es.tfg.sqlanalyzer.api.ApiNoDisponibleException;
 import es.tfg.sqlanalyzer.api.ApiPythonClient;
+import es.tfg.sqlanalyzer.api.BbddRegistrada;
 import es.tfg.sqlanalyzer.api.CreacionBbdd;
 import es.tfg.sqlanalyzer.api.ErrorDdl;
 import es.tfg.sqlanalyzer.api.ExportacionBbdd;
@@ -16,6 +17,7 @@ import es.tfg.sqlanalyzer.api.TablaOrdenada;
 import es.tfg.sqlanalyzer.api.ValidacionDdl;
 import es.tfg.sqlanalyzer.form.CreacionBbddForm;
 import es.tfg.sqlanalyzer.form.ServidorForm;
+import es.tfg.sqlanalyzer.service.PermisosBbdd;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
@@ -70,9 +72,12 @@ public class BbddController {
     static final int MAX_FILAS = 100_000;
 
     private final ApiPythonClient api;
+    // Qué BBDD puede ver y usar el usuario conectado (USUARIO: solo las suyas).
+    private final PermisosBbdd permisos;
 
-    public BbddController(ApiPythonClient api) {
+    public BbddController(ApiPythonClient api, PermisosBbdd permisos) {
         this.api = api;
+        this.permisos = permisos;
     }
 
     @ModelAttribute("activePage")
@@ -333,8 +338,9 @@ public class BbddController {
             return "bbdd";
         }
 
-        // Guardamos en la sesión la BBDD creada y mostramos el aviso.
+        // Guardamos en la sesión la BBDD creada, apuntamos que es del usuario conectado y mostramos el aviso.
         sesion.setAttribute(SESION_CREACION, creacion);
+        permisos.registrarPropietario(creacion.bbdd());
         ra.addFlashAttribute("aviso", "Se ha creado la base de datos «" + creacion.bbdd() + "» con "
                 + creacion.tablas().size() + " tablas, en el orden de Kahn.");
         return "redirect:/bbdd#creacion";
@@ -393,8 +399,8 @@ public class BbddController {
     public ResponseEntity<ProgresoInsercion> progresoInsercion(HttpSession sesion) {
         // Comprobamos que haya un DDL validado y que se haya creado la BBDD (paso 5).
         CreacionBbddForm form = (CreacionBbddForm) sesion.getAttribute(SESION_FORM);
-        // Si no hay BBDD en la sesión, devolvemos 204 No Content.
-        if (form == null) {
+        // Si no hay BBDD en la sesión o no es del usuario (USUARIO con el nombre de una BBDD ajena), devolvemos 204 No Content.
+        if (form == null || !permisos.puedeUsar(form.getNombreBbdd())) {
             return ResponseEntity.noContent().build();
         }
         try {
@@ -501,8 +507,9 @@ public class BbddController {
     @GetMapping("/dumps/{fichero}")
     // Paso 8.1: descarga del dump. La WebApp no lee el fichero: se lo pide a la API y lo copia en la respuesta.
     public void descargarDump(@PathVariable String fichero, HttpServletResponse respuesta) throws IOException {
-        // Comprobamos que el nombre del fichero sea válido (como en la API). Si no, 404.
-        if (!FICHERO_DUMP.matcher(fichero).matches()) {
+        // Comprobamos que el nombre del fichero sea válido (como en la API) y que su BBDD sea del usuario
+        // (USUARIO: solo las suyas). Si no, 404, sin decir si existe.
+        if (!FICHERO_DUMP.matcher(fichero).matches() || !permisos.puedeUsar(bbddDelDump(fichero))) {
             respuesta.sendError(HttpServletResponse.SC_NOT_FOUND);
             return;
         }
@@ -523,6 +530,11 @@ public class BbddController {
                 respuesta.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, e.getMessage());
             }
         }
+    }
+
+    // BBDD de un dump: el nombre del fichero sin «_<AAAAMMDD>_<HHMMSS>.dump» (ver FICHERO_DUMP).
+    static String bbddDelDump(String fichero) {
+        return fichero.replaceFirst("_\\d{8}_\\d{6}\\.(dump|sql)$", "");
     }
 
     // Convierte las filas escritas en números; si alguna no lo es, añade el error.
@@ -577,12 +589,14 @@ public class BbddController {
         model.addAttribute("insercion", sesion.getAttribute(SESION_INSERCION));
         // Paso 7.
         model.addAttribute("analisis", sesion.getAttribute(SESION_ANALISIS));
-        // Paso 8: tras exportar, se muestran también las BBDD objetivo registradas.
+        // Paso 8: tras exportar, se muestran también las BBDD objetivo registradas (USUARIO: solo las suyas).
         Object exportacion = sesion.getAttribute(SESION_EXPORTACION);
         model.addAttribute("exportacion", exportacion);
         if (exportacion != null) {
             try {
-                model.addAttribute("registro", api.listarRegistro());
+                List<BbddRegistrada> registro = api.listarRegistro();
+                model.addAttribute("registro", permisos.veTodas() ? registro
+                        : registro.stream().filter(r -> permisos.puedeUsar(r.nombre())).toList());
             } catch (ApiNoDisponibleException e) {
                 model.addAttribute("registro", List.of());
             }

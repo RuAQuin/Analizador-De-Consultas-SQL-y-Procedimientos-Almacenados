@@ -3,6 +3,7 @@ package es.tfg.sqlanalyzer.service;
 import es.tfg.sqlanalyzer.form.UsuarioForm;
 import es.tfg.sqlanalyzer.model.Rol;
 import es.tfg.sqlanalyzer.model.Usuario;
+import es.tfg.sqlanalyzer.repository.BbddPropietarioRepository;
 import es.tfg.sqlanalyzer.repository.UsuarioRepository;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -20,11 +21,14 @@ public class UsuarioService {
 
     private final UsuarioRepository repo;
     private final PasswordEncoder encoder;
+    // Propietarios de las BBDD del módulo 1: siguen al usuario si se renombra y se borran si se elimina.
+    private final BbddPropietarioRepository propietarios;
 
-    // Constructor que inyecta el repositorio de usuarios y el codificador de contraseñas.
-    public UsuarioService(UsuarioRepository repo, PasswordEncoder encoder) {
+    // Constructor que inyecta el repositorio de usuarios, el codificador de contraseñas y los propietarios de las BBDD.
+    public UsuarioService(UsuarioRepository repo, PasswordEncoder encoder, BbddPropietarioRepository propietarios) {
         this.repo = repo;
         this.encoder = encoder;
+        this.propietarios = propietarios;
     }
 
     @Transactional(readOnly = true)
@@ -54,14 +58,14 @@ public class UsuarioService {
 
 
     @Transactional
-    // Método que registra un nuevo usuario con el rol ANALYST y la contraseña codificada.
+    // Método que registra un nuevo usuario con el rol USUARIO y la contraseña codificada.
     public Usuario registrar(String username, String rawPassword) {
         Usuario usuario = new Usuario();
         usuario.setUsername(username);
         // Codifica la contraseña antes de guardarla en la base de datos.
         usuario.setPassword(encoder.encode(rawPassword));
-        //Siempre crea una cuenta ANALYST habilitada.
-        usuario.setRol(Rol.ANALYST);
+        // Siempre crea una cuenta USUARIO habilitada (solo sus BBDD). Los roles ANALYST y ADMIN los da un administrador.
+        usuario.setRol(Rol.USUARIO);
         usuario.setHabilitado(true);
         return repo.save(usuario);
     }
@@ -89,7 +93,12 @@ public class UsuarioService {
             throw new IllegalStateException("No se puede deshabilitar al último administrador.");
         }
 
+        // Si cambia el nombre, sus BBDD pasan al nombre nuevo.
+        if (!usuario.getUsername().equals(form.getUsername())) {
+            propietarios.renombrar(usuario.getUsername(), form.getUsername());
+        }
         usuario.setUsername(form.getUsername());
+        // Solo actualiza la contraseña si se proporciona una nueva. Codifica la nueva contraseña antes de guardarla en la base de datos.
         if (StringUtils.hasText(form.getPassword())) {
             usuario.setPassword(encoder.encode(form.getPassword()));
         }
@@ -105,6 +114,9 @@ public class UsuarioService {
         if (usuario.getRol() == Rol.ADMIN && esUltimoAdmin(usuario)) {
             throw new IllegalStateException("No se puede eliminar al último administrador.");
         }
+        // Sus BBDD no se borran, pero se quedan sin propietario: ya solo las ven ADMIN y ANALYST (y no las heredaría
+        // otro usuario que se registre después con el mismo nombre).
+        propietarios.borrarDe(usuario.getUsername());
         repo.delete(usuario);
     }
 

@@ -34,7 +34,7 @@
                 </tr>
                 <tr th:each="usuario : ${usuarios}">
                     <td th:text="${usuario.username}">usuario</td>
-                    <td th:text="${usuario.rol.name() == 'ADMIN'} ? 'Administrador' : 'Analista'">Rol</td>
+                    <td th:text="${usuario.rol.name() == 'ADMIN'} ? 'Administrador' : (${usuario.rol.name() == 'ANALYST'} ? 'Analista' : 'Usuario')">Rol</td>
                     <td th:text="${usuario.habilitado} ? 'Activo' : 'Deshabilitado'">Activo</td>
                     <td class="actions">
                         <a th:href="@{/usuarios/{id}/editar(id=${usuario.id})}" class="btn btn-secondary btn-sm">Editar</a>

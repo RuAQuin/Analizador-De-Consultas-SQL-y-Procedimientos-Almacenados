@@ -20,10 +20,10 @@ Las cuentas se persisten en una BBDD propia H2 (fichero `./data/sqlanalyzer`,
 tabla `usuarios`), gestionada con Spring Data JPA. Al arrancar por primera vez
 (tabla vacía) se siembran dos cuentas iniciales:
 
-| Usuario    | Contraseña    | Rol     | Acceso                                  |
-|------------|---------------|---------|-----------------------------------------|
-| `admin`    | `admin123`    | ADMIN   | Todo, incluida la gestión de usuarios   |
-| `analista` | `analista123` | ANALYST | Análisis de consultas y logs (no BBDD)  |
+| Usuario    | Contraseña    | Rol     | Acceso |
+|------------|---------------|---------|--------|
+| `admin`    | `admin123`    | ADMIN   | Todo: todas las BBDD, paso 9 (restaurar en otro servidor), logs y gestión de usuarios |
+| `analista` | `analista123` | ANALYST | Todas las BBDD, análisis y logs (sin paso 9 ni gestión de usuarios) |
 
 Se cambian con las variables de entorno `APP_ADMIN_USER`, `APP_ADMIN_PASSWORD`,
 `APP_ANALYST_USER` y `APP_ANALYST_PASSWORD` (solo tienen efecto la primera vez
@@ -32,7 +32,9 @@ que arranca la aplicación con la tabla vacía).
 A partir de ahí, las cuentas se gestionan desde la propia aplicación:
 
 - **Registro público** (`/registro`): cualquiera puede crear una cuenta con rol
-  ANALYST. Enlazado desde la pantalla de login.
+  USUARIO (solo ve y usa las BBDD que crea él, el análisis de consultas y los logs;
+  sin paso 9 ni gestión de usuarios). Enlazado desde la pantalla de login.
+  Los roles ANALYST y ADMIN solo los da un administrador.
 - **Login** (`/login`): formulario propio ya existente, ahora autenticando
   contra la BBDD de usuarios en lugar de credenciales en memoria.
 - **CRUD de usuarios** (`/usuarios`, solo ADMIN): listar, crear, editar
@@ -45,7 +47,10 @@ A partir de ahí, las cuentas se gestionan desde la propia aplicación:
 - Login por formulario propio (`/login`), logout por POST que invalida la sesión.
 - Registro público (`/registro`) y gestión de usuarios (`/usuarios`, solo ADMIN).
 - Contraseñas con BCrypt, nunca en claro ni en los formularios de edición.
-- Autorización por rol: `/usuarios/**` solo ADMIN; `/bbdd/**`, `/analisis/**` y `/logs/**` ADMIN o ANALYST.
+- Autorización por rol: `/usuarios/**` y el paso 9 (`/bbdd/servidor/**`, `/bbdd/restaurar`) solo ADMIN;
+  `/bbdd/**`, `/analisis/**` y `/logs/**` los tres roles.
+- Propietario de cada BBDD (tabla `bbdd_propietarios` de H2, se apunta al crearla en el paso 5): el rol
+  USUARIO solo ve en el registro y descarga los dumps de sus BBDD. ADMIN y ANALYST ven todas.
 - CSRF activo en todos los formularios (incluida la subida de ficheros).
 - Cabeceras: Content-Security-Policy sin scripts ni estilos inline, `frame-ancestors 'none'`, Referrer-Policy.
 - Cookie de sesión `HttpOnly` y `SameSite=Strict`, caducidad 30 min, protección contra fijación de sesión.

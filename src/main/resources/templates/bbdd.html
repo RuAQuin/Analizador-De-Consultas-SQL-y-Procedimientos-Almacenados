@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<html lang="es" xmlns:th="http://www.thymeleaf.org">
+<html lang="es" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
 <head th:replace="~{fragments/layout :: head('Creación de BBDD')}"></head>
 <body>
 <div class="shell">
@@ -23,7 +24,7 @@
                     <li th:classappend="${insercion != null} ? 'step-done'"><span class="step-dot"></span>Inserción de datos</li>
                     <li th:classappend="${analisis != null} ? 'step-done'"><span class="step-dot"></span>ANALYZE</li>
                     <li th:classappend="${exportacion != null} ? 'step-done'"><span class="step-dot"></span>pg_dump y registro</li>
-                <li th:classappend="${restauracion != null} ? 'step-done'"><span class="step-dot"></span>Restaurar en otro servidor (opcional)</li>
+                <li sec:authorize="hasRole('ADMIN')" th:classappend="${restauracion != null} ? 'step-done'"><span class="step-dot"></span>Restaurar en otro servidor (opcional)</li>
                 </ol>
             </nav>
 
@@ -420,7 +421,7 @@
             </div>
         </section>
 
-        <section class="panel panel-ancho" id="restauracion" th:if="${exportacion != null}">
+        <section class="panel panel-ancho" id="restauracion" th:if="${exportacion != null}" sec:authorize="hasRole('ADMIN')">
             <h2 class="panel-title">9. Restaurar en otro servidor <span class="muted">(opcional)</span></h2>
 
             <div class="alert alert-error" role="alert"

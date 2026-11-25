@@ -13,8 +13,9 @@ import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWrite
  * Configuración de Spring Security.
  *
  * Roles:
- *  - ADMIN   : acceso completo (creación de BBDD, análisis, logs y gestión de usuarios).
- *  - ANALYST : creación de BBDD, análisis de consultas y lectura de logs (sin gestionar usuarios).
+ *  - ADMIN   : acceso completo (todas las BBDD, paso 9, análisis, logs y gestión de usuarios).
+ *  - ANALYST : todas las BBDD, análisis de consultas y logs (sin paso 9 ni gestión de usuarios).
+ *  - USUARIO : solo sus BBDD (las que ha creado), análisis de consultas y logs (sin paso 9 ni gestión de usuarios).
  *
  * Los usuarios se persisten en la BBDD propia (H2) a través de
  * {@link es.tfg.sqlanalyzer.security.UsuarioDetailsService}; el alta inicial
@@ -32,7 +33,10 @@ public class SecurityConfig {
                 .requestMatchers("/css/**", "/js/**", "/img/**", "/favicon.ico", "/error").permitAll()
                 .requestMatchers("/login", "/registro").permitAll()
                 .requestMatchers("/usuarios/**").hasRole("ADMIN")
-                .requestMatchers("/bbdd/**", "/analisis/**", "/logs/**").hasAnyRole("ADMIN", "ANALYST")
+                // Paso 9 (probar el otro servidor y restaurar): solo ADMIN. Antes que /bbdd/** (gana la primera regla).
+                .requestMatchers("/bbdd/servidor/**", "/bbdd/restaurar").hasRole("ADMIN")
+                // Los tres roles. USUARIO solo ve y usa sus BBDD (PermisosBbdd).
+                .requestMatchers("/bbdd/**", "/analisis/**", "/logs/**").hasAnyRole("ADMIN", "ANALYST", "USUARIO")
                 .anyRequest().authenticated()
             )
             .formLogin(form -> form
@@ -48,10 +52,12 @@ public class SecurityConfig {
                 .deleteCookies("JSESSIONID")
                 .permitAll()
             )
+            // Página de acceso denegado personalizada. Se muestra cuando un usuario intenta acceder a un recurso para el que no tiene permisos.
             .exceptionHandling(ex -> ex.accessDeniedPage("/acceso-denegado"))
             .sessionManagement(session -> session
                 .sessionFixation(fix -> fix.migrateSession())
             )
+            // Cabeceras HTTP de seguridad.
             .headers(headers -> headers
                 .contentSecurityPolicy(csp -> csp.policyDirectives(
                     "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'"))

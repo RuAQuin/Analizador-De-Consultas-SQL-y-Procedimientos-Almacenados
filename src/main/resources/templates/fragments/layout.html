@@ -40,6 +40,7 @@
             <span class="user-name" sec:authentication="name">usuario</span>
             <span class="user-role" sec:authorize="hasRole('ADMIN')">Administrador</span>
             <span class="user-role" sec:authorize="hasRole('ANALYST')">Analista</span>
+            <span class="user-role" sec:authorize="hasRole('USUARIO')">Usuario</span>
         </div>
         <form th:action="@{/logout}" method="post">
             <button type="submit" class="btn btn-ghost btn-block">Cerrar sesión</button>
