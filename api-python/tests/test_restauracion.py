@@ -292,23 +292,3 @@ def test_solo_el_respaldo_registrado_de_esa_bbdd(nombre, aplicacion, tmp_path):
                tmp_path).json()
     assert "no es el respaldo registrado" in r["errores"][0]["mensaje"]
 
-
-@postgres
-def test_el_registro_antiguo_se_adapta(aplicacion):
-    # Registro creado antes de la columna servidor (clave: nombre).
-    with SERVIDOR.conectar(SERVIDOR.bd_mantenimiento, autocommit=True) as c:
-        c.execute(f"CREATE DATABASE {aplicacion.bd_repositorio}")
-    with SERVIDOR.conectar(aplicacion.bd_repositorio) as c:
-        c.execute("""CREATE TABLE bbdd_objetivo (nombre text PRIMARY KEY, ddl text NOT NULL, filas jsonb NOT NULL,
-                     tablas int NOT NULL, total_filas bigint NOT NULL, fichero_dump text NOT NULL,
-                     bytes_dump bigint NOT NULL, registrada timestamptz NOT NULL DEFAULT now())""")
-        c.execute("""INSERT INTO bbdd_objetivo (nombre, ddl, filas, tablas, total_filas, fichero_dump, bytes_dump)
-                     VALUES ('test_borrada', 'CREATE TABLE a (id int);', '{"a": 1}', 1, 1,
-                             'test_borrada_20261118_101500.dump', 10)""")
-    [antigua] = llamar("GET", "/bbdd/registro", aplicacion).json()
-    assert antigua["servidor"] == "" and antigua["existe"] is False
-    # La copia en otro servidor no sustituye a la de la aplicación.
-    assert restauracion._registrar_copia("test_borrada", "test_borrada_20261118_101500.dump", "192.168.1.57:5432",
-                                         aplicacion)
-    registradas = llamar("GET", "/bbdd/registro", aplicacion).json()
-    assert sorted(r["servidor"] for r in registradas) == ["", "192.168.1.57:5432"]

@@ -27,11 +27,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import psycopg
-from psycopg import sql
 
-from .creacion import Conexion, _sin_conexion, revisar_nombre
+from .creacion import Conexion, _borrar_bbdd, _mensaje, _sin_conexion, revisar_nombre
 from .ddl import ErrorDdl
-from .exportacion import _adaptar_registro, _detalle
 
 # Tiempo máximo de pg_restore.
 _ESPERA_PG_RESTORE = 600
@@ -99,16 +97,6 @@ def _pg_restore(fichero: Path, destino: Conexion) -> None:
         raise _FalloRestauracion(" ".join(lineas) or f"ha terminado con el código {r.returncode}")
 
 
-def _borrar(nombre: str, destino: Conexion) -> None:
-    """Si pg_restore falla a medias, se borra la BBDD que haya creado (antes se ha comprobado que no existía)."""
-    try:
-        with destino.conectar(destino.bd_mantenimiento, autocommit=True) as c:
-            # Se borra la BBDD en caso de error (no se borra automáticamente al detener el proceso).
-            c.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(nombre)))
-    except psycopg.Error:
-        pass
-
-
 def _analizar(nombre: str, destino: Conexion) -> list[TablaRestaurada]:
     """9.2: ANALYZE de toda la BBDD restaurada y filas de cada tabla según el planificador."""
     with destino.conectar(nombre, autocommit=True) as c:
@@ -129,7 +117,6 @@ def _registrar_copia(nombre: str, fichero: str, servidor: str, repositorio: Cone
     """9.3: copia la fila del paso 8 (servidor de la aplicación) con el servidor de destino. False si la BBDD no
     está registrada (no se ha exportado en el paso 8)."""
     with repositorio.conectar(repositorio.bd_repositorio) as c:
-        _adaptar_registro(c)
         fila = c.execute("""
             INSERT INTO bbdd_objetivo (servidor, nombre, ddl, filas, tablas, total_filas, fichero_dump, bytes_dump)
             SELECT %s, nombre, ddl, filas, tablas, total_filas, fichero_dump, bytes_dump
@@ -149,8 +136,7 @@ def _registrada(nombre: str, fichero: str, repositorio: Conexion) -> bool:
             # Comprobación de que exista la BBDD objetivo.
             if c.execute("SELECT to_regclass('bbdd_objetivo')").fetchone()[0] is None:
                 return False
-            # Existe --> La adapta y busca la fila del servidor.
-            _adaptar_registro(c)
+            # Existe --> Busca la fila del servidor.
             return c.execute("SELECT 1 FROM bbdd_objetivo WHERE servidor = '' AND nombre = %s AND fichero_dump = %s",
                              (nombre, fichero)).fetchone() is not None
     # No se ha podido conectar con el repositorio.
@@ -189,7 +175,8 @@ def restaurar_bbdd(nombre: str, fichero: Path, destino: Conexion, repositorio: C
         _pg_restore(fichero, destino)
     # Error --> Se borra.
     except _FalloRestauracion as e:
-        _borrar(nombre, destino)
+        # Se borra lo que haya creado a medias (antes se ha comprobado que no existía).
+        _borrar_bbdd(nombre, destino)
         return Restauracion(errores=[ErrorDdl(f"pg_restore no ha podido restaurar «{nombre}» en {destino.servidor}: {e}."
                                               " No se ha dejado nada en ese servidor")])
     try:
@@ -198,14 +185,14 @@ def restaurar_bbdd(nombre: str, fichero: Path, destino: Conexion, repositorio: C
     # Error --> BBDD restaurada pero sin ANALYZE.
     except psycopg.Error as e:
         return Restauracion(errores=[ErrorDdl(f"Se ha restaurado «{nombre}» en {destino.servidor}, pero el ANALYZE ha"
-                                              f" fallado: {_detalle(e)}")])
+                                              f" fallado: {_mensaje(e)}")])
     try:
         # Registro
         _registrar_copia(nombre, fichero.name, destino.servidor, repositorio)
     # Error --> BBDD restaurada pero sin registrar.
     except psycopg.Error as e:
         return Restauracion(errores=[ErrorDdl(f"Se ha restaurado «{nombre}» en {destino.servidor}, pero no se ha podido"
-                                              f" registrar en «{repositorio.bd_repositorio}»: {_detalle(e)}")])
+                                              f" registrar en «{repositorio.bd_repositorio}»: {_mensaje(e)}")])
     # Resultado de la restauración con el tiempo transcurrido.
     return Restauracion(bbdd=nombre, servidor=destino.servidor, version=version, fichero=fichero.name, tablas=tablas,
                         segundos=round(time.perf_counter() - inicio, 2))

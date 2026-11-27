@@ -15,8 +15,9 @@ services:
       POSTGRES_PASSWORD: ${PG_CONTRASENA:-postgres}
       POSTGRES_DB: postgres
     # 5433 en el host para no chocar con un PostgreSQL local en el 5432.
+    # Solo en 127.0.0.1: desde este equipo (pgAdmin, psql) se llega, pero no desde otros equipos de la red.
     ports:
-      - "${PG_PUERTO_HOST:-5433}:5432"
+      - "127.0.0.1:${PG_PUERTO_HOST:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Paso 8: el servidor escribe aquí los dumps (COPY ... TO PROGRAM 'pg_dump ...'); la API los lee.
@@ -48,8 +49,9 @@ services:
       HOST_LOCAL: host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Solo en 127.0.0.1: la API no tiene login, así que solo la usa la WebApp de este equipo (los roles están en ella).
     ports:
-      - "${API_PUERTO_HOST:-8000}:8000"
+      - "127.0.0.1:${API_PUERTO_HOST:-8000}:8000"
     volumes:
       # Para descargar los dumps y restaurarlos en otro servidor (paso 9).
       - dumps:/datos/dumps:ro

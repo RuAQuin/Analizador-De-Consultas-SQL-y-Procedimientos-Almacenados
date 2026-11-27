@@ -89,12 +89,7 @@ public class BbddController {
     @GetMapping
     // Muestra la pantalla con lo que haya en la sesión: el DDL validado (pasos 1 y 2) y el prototipo (paso 3).
     public String formulario(Model model, HttpSession sesion) {
-        if (!model.containsAttribute("form")) {
-            Object form = sesion.getAttribute(SESION_FORM);
-            model.addAttribute("form", form != null ? form : new CreacionBbddForm());
-        }
-        rellenarModelo(model, sesion);
-        return "bbdd";
+        return pantalla(model, sesion);
     }
 
     @PostMapping
@@ -214,10 +209,13 @@ public class BbddController {
         return "redirect:/bbdd#restauracion";
     }
 
-    // Vuelve a la pantalla (sin redirigir) con el formulario del paso 1 de la sesión.
+    // Pantalla del módulo con lo que haya en la sesión. El formulario del paso 1 es el de la sesión, salvo que ya
+    // venga en el modelo (por ejemplo, tras una redirección).
     private String pantalla(Model model, HttpSession sesion) {
-        Object form = sesion.getAttribute(SESION_FORM);
-        model.addAttribute("form", form != null ? form : new CreacionBbddForm());
+        if (!model.containsAttribute("form")) {
+            Object form = sesion.getAttribute(SESION_FORM);
+            model.addAttribute("form", form != null ? form : new CreacionBbddForm());
+        }
         rellenarModelo(model, sesion);
         return "bbdd";
     }
@@ -279,11 +277,9 @@ public class BbddController {
 
         // Si hay errores de coherencia, se vuelve a la pantalla con las filas escritas para corregirlas.
         if (prototipo == null || !prototipo.valido()) {
-            model.addAttribute("form", form);
             model.addAttribute("erroresPrototipo", errores);
-            rellenarModelo(model, sesion);
             model.addAttribute("filas", escritas);
-            return "bbdd";
+            return pantalla(model, sesion);
         }
 
         // Guardamos en la sesión las filas y el prototipo de datos.
@@ -332,10 +328,8 @@ public class BbddController {
 
         // Si hay errores de coherencia, se vuelve a la pantalla con las filas escritas para corregirlas.
         if (creacion == null || !creacion.valido()) {
-            model.addAttribute("form", form);
             model.addAttribute("erroresCreacion", errores);
-            rellenarModelo(model, sesion);
-            return "bbdd";
+            return pantalla(model, sesion);
         }
 
         // Guardamos en la sesión la BBDD creada, apuntamos que es del usuario conectado y mostramos el aviso.
@@ -379,10 +373,8 @@ public class BbddController {
 
         // Si algo falla (por ejemplo, una fila que incumple un CHECK), se muestra el aviso y se puede reintentar.
         if (insercion == null || !insercion.valido()) {
-            model.addAttribute("form", form);
             model.addAttribute("erroresInsercion", errores);
-            rellenarModelo(model, sesion);
-            return "bbdd";
+            return pantalla(model, sesion);
         }
 
         // Guardamos en la sesión los datos insertados y mostramos el aviso.
@@ -445,10 +437,8 @@ public class BbddController {
 
         // Si algo falla (por ejemplo, se ha perdido la conexión), se muestra el aviso y se puede reintentar.
         if (analisis == null || !analisis.valido()) {
-            model.addAttribute("form", form);
             model.addAttribute("erroresAnalisis", errores);
-            rellenarModelo(model, sesion);
-            return "bbdd";
+            return pantalla(model, sesion);
         }
 
         // Guardamos en la sesión el resultado del ANALYZE y mostramos el aviso.
@@ -491,10 +481,8 @@ public class BbddController {
 
         // Si algo falla (pg_dump, repositorio...), se muestra el aviso y se puede reintentar.
         if (exportacion == null || !exportacion.valido()) {
-            model.addAttribute("form", form);
             model.addAttribute("erroresExportacion", errores);
-            rellenarModelo(model, sesion);
-            return "bbdd";
+            return pantalla(model, sesion);
         }
 
         // Guardamos en la sesión la exportación y mostramos el aviso.

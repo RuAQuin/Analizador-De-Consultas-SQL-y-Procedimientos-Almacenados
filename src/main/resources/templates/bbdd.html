@@ -119,13 +119,7 @@
                 y las columnas serial, IDENTITY o con DEFAULT las rellena PostgreSQL.
             </p>
 
-            <div class="alert alert-error" role="alert"
-                 th:if="${erroresPrototipo != null and !#lists.isEmpty(erroresPrototipo)}">
-                <strong>Aviso de coherencia</strong>
-                <ul class="lista-avisos">
-                    <li th:each="e : ${erroresPrototipo}" th:text="${e}">aviso</li>
-                </ul>
-            </div>
+            <div th:replace="~{fragments/layout :: errores('Aviso de coherencia', ${erroresPrototipo})}"></div>
 
             <form th:action="@{/bbdd/prototipo}" method="post" class="form" novalidate>
                 <!-- Una vez creada la BBDD las filas no se pueden cambiar: hay que validar otro DDL. -->
@@ -184,13 +178,7 @@
         <section class="panel panel-ancho" id="creacion" th:if="${prototipo != null}">
             <h2 class="panel-title">4. Revisión y confirmación · 5. CREATE DATABASE / CREATE TABLE</h2>
 
-            <div class="alert alert-error" role="alert"
-                 th:if="${erroresCreacion != null and !#lists.isEmpty(erroresCreacion)}">
-                <strong>No se ha creado la base de datos</strong>
-                <ul class="lista-avisos">
-                    <li th:each="e : ${erroresCreacion}" th:text="${e}">aviso</li>
-                </ul>
-            </div>
+            <div th:replace="~{fragments/layout :: errores('No se ha creado la base de datos', ${erroresCreacion})}"></div>
 
             <div th:if="${creacion == null}">
                 <p class="muted">
@@ -235,13 +223,7 @@
         <section class="panel panel-ancho" id="insercion" th:if="${creacion != null}">
             <h2 class="panel-title">6. Inserción de datos</h2>
 
-            <div class="alert alert-error" role="alert"
-                 th:if="${erroresInsercion != null and !#lists.isEmpty(erroresInsercion)}">
-                <strong>No se han insertado los datos</strong>
-                <ul class="lista-avisos">
-                    <li th:each="e : ${erroresInsercion}" th:text="${e}">aviso</li>
-                </ul>
-            </div>
+            <div th:replace="~{fragments/layout :: errores('No se han insertado los datos', ${erroresInsercion})}"></div>
 
             <div th:if="${insercion == null}">
                 <p class="muted">
@@ -290,13 +272,7 @@
         <section class="panel panel-ancho" id="analisis" th:if="${insercion != null}">
             <h2 class="panel-title">7. ANALYZE para cerrar la carga</h2>
 
-            <div class="alert alert-error" role="alert"
-                 th:if="${erroresAnalisis != null and !#lists.isEmpty(erroresAnalisis)}">
-                <strong>No se han analizado las tablas</strong>
-                <ul class="lista-avisos">
-                    <li th:each="e : ${erroresAnalisis}" th:text="${e}">aviso</li>
-                </ul>
-            </div>
+            <div th:replace="~{fragments/layout :: errores('No se han analizado las tablas', ${erroresAnalisis})}"></div>
 
             <div th:if="${analisis == null}">
                 <p class="muted">
@@ -348,13 +324,7 @@
         <section class="panel panel-ancho" id="exportacion" th:if="${analisis != null}">
             <h2 class="panel-title">8. pg_dump y registro</h2>
 
-            <div class="alert alert-error" role="alert"
-                 th:if="${erroresExportacion != null and !#lists.isEmpty(erroresExportacion)}">
-                <strong>No se ha exportado la base de datos</strong>
-                <ul class="lista-avisos">
-                    <li th:each="e : ${erroresExportacion}" th:text="${e}">aviso</li>
-                </ul>
-            </div>
+            <div th:replace="~{fragments/layout :: errores('No se ha exportado la base de datos', ${erroresExportacion})}"></div>
 
             <div th:if="${exportacion == null}">
                 <p class="muted">
@@ -424,13 +394,7 @@
         <section class="panel panel-ancho" id="restauracion" th:if="${exportacion != null}" sec:authorize="hasRole('ADMIN')">
             <h2 class="panel-title">9. Restaurar en otro servidor <span class="muted">(opcional)</span></h2>
 
-            <div class="alert alert-error" role="alert"
-                 th:if="${erroresRestauracion != null and !#lists.isEmpty(erroresRestauracion)}">
-                <strong>No se ha restaurado la base de datos</strong>
-                <ul class="lista-avisos">
-                    <li th:each="e : ${erroresRestauracion}" th:text="${e}">aviso</li>
-                </ul>
-            </div>
+            <div th:replace="~{fragments/layout :: errores('No se ha restaurado la base de datos', ${erroresRestauracion})}"></div>
 
             <p class="muted">
                 Lleva la base de datos al PostgreSQL de otro equipo de la red: la API restaura allí el respaldo del

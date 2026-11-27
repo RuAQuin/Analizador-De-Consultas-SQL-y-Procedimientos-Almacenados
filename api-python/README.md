@@ -27,6 +27,9 @@ Con Docker (desde la raíz del proyecto):
 docker compose up -d --build --wait   # API en http://localhost:8000, PostgreSQL en localhost:5433
 ```
 
+Los dos puertos se publican solo en `127.0.0.1`: se llega desde este equipo (la WebApp, pgAdmin, psql), pero no
+desde otros equipos de la red. La API no tiene login, así que los roles de la WebApp no se pueden saltar por ella.
+
 En local:
 
 ```bash
@@ -360,7 +363,7 @@ equipo de la red se aprovecha el respaldo del paso 8 (`plano_datos/restauracion.
      se borra lo restaurado.
   3. `ANALYZE`: el dump no lleva las estadísticas del planificador.
   4. Registro: la copia queda como BBDD objetivo de ese servidor (columna `servidor` = «host:puerto», clave
-     `(servidor, nombre)`; vacío = el servidor de la aplicación). Los registros anteriores se adaptan solos.
+     `(servidor, nombre)`; vacío = el servidor de la aplicación).
      «¿Existe?» solo se comprueba en el servidor de la aplicación (`null` en los demás: no se guarda su contraseña).
 - La API no guarda la contraseña (la WebApp la tiene solo en la sesión del usuario). «localhost» es el equipo del
   usuario, no el contenedor de la API: se cambia por `HOST_LOCAL` (`host.docker.internal` en `docker-compose.yml`).

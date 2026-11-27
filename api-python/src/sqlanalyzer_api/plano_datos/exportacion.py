@@ -34,7 +34,7 @@ from pathlib import Path
 import psycopg
 from psycopg import sql
 
-from .creacion import Conexion, revisar_nombre
+from .creacion import Conexion, _mensaje, revisar_nombre
 from .ddl import ErrorDdl
 from .dependencias import Dependencias
 from .estadisticas import _leer
@@ -62,18 +62,6 @@ _TABLA_REGISTRO = """
     )
 """
 # Nota: las filas estarían en el formato: {"pedidos": 8400, "clientes": 1500, "productos": 320}
-
-# Registros creados antes de que existiera la columna servidor (clave solo «nombre»): se adaptan sin perder filas.
-_ADAPTAR_REGISTRO = """
-    ALTER TABLE bbdd_objetivo ADD COLUMN IF NOT EXISTS servidor text NOT NULL DEFAULT '';
-    DO $$ BEGIN
-        IF (SELECT array_length(conkey, 1) FROM pg_constraint
-            WHERE conrelid = 'bbdd_objetivo'::regclass AND contype = 'p') = 1 THEN
-            ALTER TABLE bbdd_objetivo DROP CONSTRAINT bbdd_objetivo_pkey, ADD PRIMARY KEY (servidor, nombre);
-        END IF;
-    END $$;
-"""
-
 
 
 @dataclass(frozen=True)
@@ -151,10 +139,9 @@ def _pg_dump(c: psycopg.Connection, nombre: str, ruta: str, conexion: Conexion) 
     # Si algo falla, se borra el fichero.
 
 
-def _adaptar_registro(c: psycopg.Connection) -> None:
-    """Crea la tabla del registro si no existe y adapta la de versiones anteriores (columna servidor)."""
+def _crear_registro(c: psycopg.Connection) -> None:
+    """Crea la tabla del registro si no existe."""
     c.execute(_TABLA_REGISTRO)
-    c.execute(_ADAPTAR_REGISTRO)
 
 
 def _registrar(nombre: str, ddl: str, filas: dict[str, int], fichero: str, tamano: int,
@@ -170,7 +157,7 @@ def _registrar(nombre: str, ddl: str, filas: dict[str, int], fichero: str, taman
             c.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(conexion.bd_repositorio)))
     # Conexión a la BBDD repositorio.
     with conexion.conectar(conexion.bd_repositorio) as c:
-        _adaptar_registro(c) # Se crea la tabla si no existe ya (o se adapta).
+        _crear_registro(c) # Se crea la tabla si no existe ya.
         # Se añade la BBDD que se respalda con sus datos.
         return c.execute("""
             INSERT INTO bbdd_objetivo (servidor, nombre, ddl, filas, tablas, total_filas, fichero_dump, bytes_dump)
@@ -180,14 +167,6 @@ def _registrar(nombre: str, ddl: str, filas: dict[str, int], fichero: str, taman
                 bytes_dump = EXCLUDED.bytes_dump, registrada = now()
             RETURNING registrada""", # Devuelve la fecha de registro.
             (servidor, nombre, ddl, json.dumps(filas), len(filas), sum(filas.values()), fichero, tamano)).fetchone()[0]
-
-
-def _detalle(e: psycopg.Error) -> str:
-    """Lanza un mensaje legible de un error de psycopg. 
-    Usa diag.message_primary si existe y, si no, la última línea del texto de la excepción.
-    """
-    diag = getattr(e, "diag", None)
-    return diag.message_primary if diag and diag.message_primary else str(e).strip().splitlines()[-1]
 
 
 def exportar_bbdd(nombre: str, ddl: str, dependencias: Dependencias, filas: dict[str, int],
@@ -214,7 +193,7 @@ def exportar_bbdd(nombre: str, ddl: str, dependencias: Dependencias, filas: dict
             try:
                 _pg_dump(c, nombre, ruta, conexion)
             except psycopg.Error as e:
-                detalle = e.diag.message_detail or _detalle(e)
+                detalle = e.diag.message_detail or _mensaje(e)
                 return Exportacion(errores=[ErrorDdl(f"pg_dump no ha podido respaldar «{nombre}»: {detalle}")])
             # Se lee el tamaño del dump con pg_stat_file (el fichero está en el servidor).
             tamano = c.execute("SELECT size FROM pg_stat_file(%s)", (ruta,)).fetchone()[0]
@@ -225,10 +204,10 @@ def exportar_bbdd(nombre: str, ddl: str, dependencias: Dependencias, filas: dict
             except psycopg.Error as e:
                 _en_el_servidor(c, f"rm -f {shlex.quote(ruta)}")
                 return Exportacion(errores=[ErrorDdl(f"No se ha podido registrar «{nombre}» en «{conexion.bd_repositorio}»:"
-                                                     f" {_detalle(e)}. No se ha guardado el dump")])
+                                                     f" {_mensaje(e)}. No se ha guardado el dump")])
     # Error de conexión
     except psycopg.OperationalError as e:
-        return Exportacion(errores=[ErrorDdl(f"No se ha podido conectar con la base de datos «{nombre}»: {_detalle(e)}")])
+        return Exportacion(errores=[ErrorDdl(f"No se ha podido conectar con la base de datos «{nombre}»: {_mensaje(e)}")])
     # Si todo va bien, devuelve la exportación.
     return Exportacion(bbdd=nombre, fichero=fichero, bytes=tamano, registrada=registrada,
                        segundos=round(time.perf_counter() - inicio, 2))
@@ -246,7 +225,6 @@ def listar_registro(conexion: Conexion) -> list[BbddRegistrada]:
         # Si no exista la BBDD objetivo devuelve []
         if c.execute("SELECT to_regclass('bbdd_objetivo')").fetchone()[0] is None:
             return []
-        _adaptar_registro(c) # Registros de versiones anteriores, sin la columna servidor.
         # Lee las filas. Solo se puede comprobar si existen las BBDD del servidor de la aplicación.
         filas = c.execute("""
             SELECT servidor, nombre, tablas, total_filas, fichero_dump, bytes_dump, registrada,

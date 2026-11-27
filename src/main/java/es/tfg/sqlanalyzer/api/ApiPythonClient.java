@@ -25,7 +25,7 @@ public class ApiPythonClient {
     // Constructor que inyecta el RestClient y la URL de la API Python desde application.properties.
     public ApiPythonClient(RestClient.Builder builder,
                            @Value("${app.api.url}") String url,
-                           @Value("${app.api.timeout:30s}") Duration timeout) {
+                           @Value("${app.api.timeout:10m}") Duration timeout) {
         var factory = new SimpleClientHttpRequestFactory(); // Crea un factory para configurar el tiempo de espera de las peticiones HTTP.
         factory.setConnectTimeout(Duration.ofSeconds(3)); // Tiempo de espera para establecer la conexión con la API Python.
         factory.setReadTimeout(timeout); // Tiempo de espera para recibir la respuesta de la API Python.
@@ -45,12 +45,12 @@ public class ApiPythonClient {
 
     // Pasos 4 y 5 del módulo 1: tras la confirmación del usuario, crea la BBDD y sus tablas.
     public CreacionBbdd crearBbdd(String nombre, String ddl, Map<String, Integer> filas) {
-        return post("/bbdd/crear", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), CreacionBbdd.class);
+        return post("/bbdd/crear", bbdd(nombre, ddl, filas), CreacionBbdd.class);
     }
 
     // Paso 6 del módulo 1: inserta los datos del prototipo en la BBDD creada en el paso 5.
     public InsercionDatos insertarDatos(String nombre, String ddl, Map<String, Integer> filas) {
-        return post("/bbdd/insertar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), InsercionDatos.class);
+        return post("/bbdd/insertar", bbdd(nombre, ddl, filas), InsercionDatos.class);
     }
 
     // Paso 6: cómo va la inserción en marcha en «nombre» (reloj de la carga). Null si no hay ninguna.
@@ -62,19 +62,28 @@ public class ApiPythonClient {
                     respuesta.getStatusCode().is2xxSuccessful() ? respuesta.bodyTo(ProgresoInsercion.class) : null);
         // Si hay un error al contactar con la API Python, lanza una excepción personalizada con un mensaje de error.
         } catch (RestClientException e) {
-            throw new ApiNoDisponibleException(
-                    "No se ha podido contactar con la API Python (" + url + "). ¿Está arrancada?", e);
+            throw sinApi(e);
         }
     }
 
     // Paso 7 del módulo 1: ANALYZE de las tablas para cerrar la carga.
     public AnalisisBbdd analizarBbdd(String nombre, String ddl, Map<String, Integer> filas) {
-        return post("/bbdd/analizar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), AnalisisBbdd.class);
+        return post("/bbdd/analizar", bbdd(nombre, ddl, filas), AnalisisBbdd.class);
     }
 
     // Paso 8 del módulo 1: respaldo con pg_dump (formato custom) y registro como BBDD objetivo.
     public ExportacionBbdd exportarBbdd(String nombre, String ddl, Map<String, Integer> filas) {
-        return post("/bbdd/exportar", Map.of("nombre", nombre, "ddl", ddl, "filas", filas), ExportacionBbdd.class);
+        return post("/bbdd/exportar", bbdd(nombre, ddl, filas), ExportacionBbdd.class);
+    }
+
+    // Cuerpo común de los pasos 5 a 8: la API no guarda nada, así que recibe siempre la BBDD, su DDL y sus filas.
+    private static Map<String, Object> bbdd(String nombre, String ddl, Map<String, Integer> filas) {
+        return Map.of("nombre", nombre, "ddl", ddl, "filas", filas);
+    }
+
+    // Excepción cuando la API Python no responde (no está arrancada o no se llega a su URL).
+    private ApiNoDisponibleException sinApi(RestClientException e) {
+        return new ApiNoDisponibleException("No se ha podido contactar con la API Python (" + url + "). ¿Está arrancada?", e);
     }
 
     // Paso 9: «Probar conexión» con el PostgreSQL de otro equipo (que la API llega y que se pueden crear BBDD).
@@ -119,8 +128,7 @@ public class ApiPythonClient {
             }));
         // Si la respuesta es nula, lanza una excepción indicando que la API Python ha devuelto una respuesta vacía.
         } catch (RestClientException e) {
-            throw new ApiNoDisponibleException(
-                    "No se ha podido contactar con la API Python (" + url + "). ¿Está arrancada?", e);
+            throw sinApi(e);
         }
     }
 
@@ -141,8 +149,7 @@ public class ApiPythonClient {
             return respuesta;
         } catch (RestClientException e) {
             // Si hay un error al contactar con la API Python, lanza una excepción personalizada con un mensaje de error.
-            throw new ApiNoDisponibleException(
-                    "No se ha podido contactar con la API Python (" + url + "). ¿Está arrancada?", e);
+            throw sinApi(e);
         }
     }
 }

@@ -34,7 +34,7 @@ from pglast.stream import RawStream
 
 from .arboles import elegir_fks_agrupacion
 from .ddl import ErrorDdl, nombre_tabla
-from .dependencias import ClaveForanea, Dependencias
+from .dependencias import ClaveForanea, Dependencias, _nombres
 
 MAX_FILAS = 100_000
 FILAS_MUESTRA = 5
@@ -81,11 +81,6 @@ class Prototipo:
     @property
     def valido(self) -> bool:
         return not self.errores
-
-
-# Convierte de pglast a string.
-def _nombres(lista) -> tuple[str, ...]:
-    return tuple(n.sval for n in lista or ())
 
 
 def leer_columnas(crear: ast.CreateStmt) -> tuple[list[Columna], list[tuple[str, ...]], tuple[str, ...]]:

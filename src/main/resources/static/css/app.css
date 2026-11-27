@@ -192,6 +192,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .btn-danger:hover { filter: brightness(1.08); }
 .btn-sm { padding: .4rem .75rem; font-size: .82rem; }
 .btn-block { width: 100%; align-self: stretch; }
+/* Botón desactivado (p. ej. «Insertar» mientras dura la carga o «Generar vista previa» con la BBDD ya creada):
+   más claro, sin mano ni efecto al pasar el ratón. */
+.btn:disabled,
+.btn:disabled:hover {
+    opacity: .55;
+    cursor: not-allowed;
+    filter: none;
+}
 
 /* ---------- Mensajes y estados vacíos ---------- */
 .alert { padding: .75rem 1rem; border-radius: 6px; margin-bottom: 1rem; border: 1px solid; }

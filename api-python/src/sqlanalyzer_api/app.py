@@ -251,7 +251,7 @@ def validar_ddl(peticion: PeticionDdl) -> RespuestaDdl:
 
     Los ciclos (entre tablas o entre árboles) no se resuelven: se devuelven como error.
     """
-    respuesta, _, _ = _analizar_ddl(peticion.ddl)
+    respuesta, *_ = _analizar_ddl(peticion.ddl)
     return respuesta
 
 
@@ -261,7 +261,7 @@ def definir_prototipo(peticion: PeticionPrototipo) -> RespuestaPrototipo:
 
     La API no guarda nada entre peticiones: el DDL se vuelve a analizar (pasos 1 y 2).
     """
-    respuesta, resultado, dependencias = _analizar_ddl(peticion.ddl)
+    respuesta, resultado, dependencias, *_ = _analizar_ddl(peticion.ddl)
     if not respuesta.valido:
         return RespuestaPrototipo(valido=False, errores=respuesta.errores)
     prototipo = generar_prototipo(resultado.sentencias, dependencias, peticion.filas)
@@ -282,7 +282,7 @@ def crear(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> Resp
 
     Antes se vuelven a comprobar el DDL (pasos 1 y 2) y el prototipo (paso 3): la API no guarda nada.
     """
-    respuesta, resultado, dependencias = _analizar_ddl(peticion.ddl)
+    respuesta, resultado, dependencias, *_ = _analizar_ddl(peticion.ddl)
     if not respuesta.valido:
         return RespuestaCreacion(valido=False, errores=respuesta.errores)
     prototipo = generar_prototipo(resultado.sentencias, dependencias, peticion.filas)
@@ -305,11 +305,9 @@ def insertar(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> R
 
     Recibe lo mismo que /bbdd/crear. Antes se vuelven a comprobar el DDL y el prototipo.
     """
-    respuesta, resultado, dependencias = _analizar_ddl(peticion.ddl)
+    respuesta, resultado, dependencias, arboles, orden_carga = _analizar_ddl(peticion.ddl)
     if not respuesta.valido:
         return RespuestaInsercion(valido=False, errores=respuesta.errores)
-    arboles = formar_arboles(dependencias)
-    orden_carga = ordenar_arboles(dependencias, arboles, peticion.ddl)
     insercion = insertar_datos(peticion.nombre, resultado.sentencias, dependencias, arboles, orden_carga,
                                peticion.filas, con)
     return RespuestaInsercion(
@@ -349,7 +347,7 @@ def analizar(peticion: PeticionCreacion, con: Conexion = Depends(conexion)) -> R
 
     Recibe lo mismo que /bbdd/insertar: el DDL da las tablas y las filas, las que debería tener cada una.
     """
-    respuesta, _, dependencias = _analizar_ddl(peticion.ddl)
+    respuesta, _, dependencias, *_ = _analizar_ddl(peticion.ddl)
     if not respuesta.valido:
         return RespuestaAnalisis(valido=False, errores=respuesta.errores)
     analisis = analizar_bbdd(peticion.nombre, dependencias, peticion.filas, con)
@@ -373,7 +371,7 @@ def exportar(peticion: PeticionCreacion, con: Conexion = Depends(conexion),
 
     Recibe lo mismo que /bbdd/analizar: el DDL y las filas se guardan en el registro.
     """
-    respuesta, _, dependencias = _analizar_ddl(peticion.ddl)
+    respuesta, _, dependencias, *_ = _analizar_ddl(peticion.ddl)
     if not respuesta.valido:
         return RespuestaExportacion(valido=False, errores=respuesta.errores)
     exportacion = exportar_bbdd(peticion.nombre, peticion.ddl, dependencias, peticion.filas, con, directorio)
@@ -468,17 +466,18 @@ def descargar_dump(fichero: str, directorio: Path = Depends(dumps)) -> FileRespo
 
 
 def _analizar_ddl(ddl: str):
-    """Pasos 1 y 2. Devuelve la respuesta y, si el DDL es válido, el parseo y las dependencias."""
+    """Pasos 1 y 2. Devuelve la respuesta y, si el DDL es válido, el parseo, las dependencias, los árboles y su
+    orden de carga (si no, None)."""
     # Validamos el DDL
     resultado = parsear_ddl(ddl)
     if not resultado.valido:
-        return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(resultado.errores)), None, None
+        return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(resultado.errores)), None, None, None, None
 
     # Comprobamos que las dependencias sean correctas (FK a tablas definidas y sin ciclos).
     dependencias = analizar_dependencias(resultado.sentencias, ddl)
     if not dependencias.valido:
         return RespuestaDdl(valido=False, tablas=resultado.tablas, errores=_errores(dependencias.errores),
-                            claves_foraneas=_fks(dependencias.claves_foraneas)), None, None
+                            claves_foraneas=_fks(dependencias.claves_foraneas)), None, None, None, None
 
     # Formamos los árboles y ordenamos cómo debe ser su carga (sin ciclos entre árboles).
     arboles = formar_arboles(dependencias)
@@ -493,7 +492,7 @@ def _analizar_ddl(ddl: str):
         orden_carga=[ArbolOrdenadoDto(raiz=a.raiz, nivel=a.nivel, depende_de=a.depende_de,
                                       referencias=_fks(a.referencias)) for a in orden_carga.orden],
     )
-    return respuesta, resultado, dependencias
+    return respuesta, resultado, dependencias, arboles, orden_carga
 
 # Conversión de objetos internos en en listas de DTOs.
 

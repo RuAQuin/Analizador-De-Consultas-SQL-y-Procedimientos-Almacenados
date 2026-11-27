@@ -53,5 +53,14 @@
     <div th:if="${error}" class="alert alert-error" role="alert" th:text="${error}"></div>
 </div>
 
+<!-- Errores de un paso del módulo 1: título y lista de motivos. No se muestra si la lista está vacía. -->
+<div th:fragment="errores(titulo, lista)" class="alert alert-error" role="alert"
+     th:if="${lista != null and !#lists.isEmpty(lista)}">
+    <strong th:text="${titulo}">No se ha podido completar el paso</strong>
+    <ul class="lista-avisos">
+        <li th:each="e : ${lista}" th:text="${e}">aviso</li>
+    </ul>
+</div>
+
 </body>
 </html>
