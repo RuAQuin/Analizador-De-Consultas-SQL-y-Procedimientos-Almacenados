@@ -24,8 +24,16 @@
                     </select>
                 </label>
                 <label class="field field-sm">
-                    <span>Base de datos destino</span>
-                    <input type="text" th:field="*{bbddDestino}" placeholder="tienda_demo">
+                    <span>Base de datos objetivo</span>
+                    <!-- Solo las BBDD generadas en el módulo 1 que puede usar el usuario (USUARIO: las suyas). -->
+                    <select th:field="*{bbddDestino}" th:classappend="${#fields.hasErrors('bbddDestino')} ? 'invalid'">
+                        <option value="">Ninguna (solo análisis estático)</option>
+                        <option th:each="b : ${bbdds}" th:value="${b}" th:text="${b}">tienda_demo</option>
+                    </select>
+                    <small class="field-error" th:if="${#fields.hasErrors('bbddDestino')}" th:errors="*{bbddDestino}"></small>
+                    <small class="muted" th:if="${bbdds != null and #lists.isEmpty(bbdds)}">
+                        No tienes BBDD objetivo: genera y exporta una en <a th:href="@{/bbdd}">Creación de BBDD</a>.
+                    </small>
                 </label>
             </div>
 
@@ -40,14 +48,24 @@
             <fieldset class="checks">
                 <legend>Qué ejecutar</legend>
                 <label class="check"><input type="checkbox" th:field="*{analisisEstatico}"><span>Análisis estático (pglast)</span></label>
-                <label class="check"><input type="checkbox" th:field="*{explainPlan}"><span>Explain Plan</span></label>
-                <label class="check"><input type="checkbox" th:field="*{explainAnalyze}"><span>EXPLAIN ANALYZE (ejecuta la consulta)</span></label>
+                <label class="check"><input type="checkbox" th:field="*{permitirAnalyze}"><span>Permitir EXPLAIN ANALYZE (ejecuta la consulta)</span></label>
                 <label class="check"><input type="checkbox" th:field="*{formatear}"><span>Formatear SQL</span></label>
-                <small class="field-error" th:if="${#fields.hasErrors('explainAnalyze')}" th:errors="*{explainAnalyze}"></small>
             </fieldset>
 
             <button type="submit" class="btn btn-primary">Analizar</button>
         </form>
+
+        <!-- Resultado del análisis: los errores o lo que se ha analizado. -->
+        <section class="panel" id="resultado" th:if="${resultado != null}">
+            <h2 class="panel-title">Resultado</h2>
+            <div th:replace="~{fragments/layout :: errores('No se ha podido analizar', ${erroresAnalisis})}"></div>
+            <p th:if="${resultado.valido and resultado.bbdd != null}"
+               th:text="|SQL recibido (${resultado.tipo == 'PROCEDIMIENTO' ? 'procedimiento' : 'consulta'}) para «${resultado.bbdd}» (PostgreSQL ${resultado.version}).|">
+                SQL recibido (consulta) para «tienda» (PostgreSQL 17).</p>
+            <p th:if="${resultado.valido and resultado.bbdd == null}"
+               th:text="|SQL recibido (${resultado.tipo == 'PROCEDIMIENTO' ? 'procedimiento' : 'consulta'}) sin BBDD objetivo: solo análisis estático.|">
+                SQL recibido (consulta) sin BBDD objetivo: solo análisis estático.</p>
+        </section>
 
         <section class="grid-2 results">
             <article class="panel">

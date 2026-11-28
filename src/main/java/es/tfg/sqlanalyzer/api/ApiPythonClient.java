@@ -2,6 +2,7 @@ package es.tfg.sqlanalyzer.api;
 
 import java.io.OutputStream;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -95,6 +96,13 @@ public class ApiPythonClient {
     public RestauracionBbdd restaurarBbdd(String nombre, String fichero, Servidor servidor) {
         return post("/bbdd/restaurar", Map.of("nombre", nombre, "fichero", fichero, "servidor", servidor),
                 RestauracionBbdd.class);
+    }
+
+    // Módulo 2: análisis de una consulta o procedimiento sobre la BBDD objetivo «bbdd» (null: solo análisis estático).
+    public AnalisisConsulta analizarConsulta(String sql, String tipo, String bbdd) {
+        Map<String, Object> cuerpo = new HashMap<>(Map.of("sql", sql, "tipo", tipo));
+        cuerpo.put("bbdd", bbdd); // Map.of no admite null.
+        return post("/analisis", cuerpo, AnalisisConsulta.class);
     }
 
     // Paso 8.2: BBDD objetivo registradas, la última primero.

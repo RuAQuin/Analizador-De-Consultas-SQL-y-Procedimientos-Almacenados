@@ -6,7 +6,7 @@ Burgos). Tiene tres módulos:
 | Módulo | Qué hace | Estado |
 |--------|----------|--------|
 | 1. Generación de BBDD | A partir de un DDL y del número de filas de cada tabla, crea la BBDD en PostgreSQL, la llena de datos, la analiza (ANALYZE), la exporta con `pg_dump` y la registra como BBDD objetivo. Opcionalmente, la restaura en el PostgreSQL de otro equipo | Hecho |
-| 2. Análisis de consultas | Análisis estático con pglast, EXPLAIN, formato SQL y recomendaciones | Pendiente (solo el formulario) |
+| 2. Análisis de consultas | Análisis estático con pglast, EXPLAIN, formato SQL y recomendaciones | En curso: parte 1 (SQL y BBDD objetivo) |
 | 3. Logs JPA/Hibernate | Cargar un `.txt` de logs, extraer las consultas y analizarlas | Pendiente (solo la subida del fichero) |
 
 ## Arquitectura
@@ -49,7 +49,7 @@ En `src/main/resources/application.properties`:
 
 | Propiedad | Por defecto | Qué es |
 |-----------|-------------|--------|
-| `app.api.url` (variable `API_URL`) | `http://localhost:8000` | Dirección de la API Python |
+| `app.api.url` (variable `API_URL`) | `http://127.0.0.1:8000` | Dirección de la API Python |
 | `app.api.timeout` | `10m` | Máximo que se espera la respuesta de la API (la inserción de millones de filas tarda más de 30 s). Si la API está parada se detecta enseguida: la conexión tiene su propio límite de 3 s |
 | `server.servlet.session.timeout` | `30m` | Caducidad de la sesión. El progreso del módulo 1 (DDL validado, prototipo, BBDD creada...) se guarda en ella |
 | `spring.datasource.url` | `./data/sqlanalyzer` | BBDD propia H2 (usuarios y propietarios de las BBDD) |
@@ -101,9 +101,9 @@ src/main/java/es/tfg/sqlanalyzer
 ├── SqlAnalyzerApplication.java
 ├── api/           ApiPythonClient (único cliente de la API) y los records de sus respuestas
 │                  (ValidacionDdl, PrototipoDatos, CreacionBbdd, InsercionDatos, AnalisisBbdd,
-│                  ExportacionBbdd, RestauracionBbdd, BbddRegistrada...)
+│                  ExportacionBbdd, RestauracionBbdd, BbddRegistrada, AnalisisConsulta...)
 ├── config/        SecurityConfig, DataInitializer
-├── controller/    HomeController, BbddController (módulo 1), AnalisisController, LogsController,
+├── controller/    HomeController, BbddController (módulo 1), AnalisisController (módulo 2), LogsController,
 │                  RegistroController, UsuarioController, UploadErrorHandler
 ├── form/          CreacionBbddForm, ServidorForm, AnalisisForm, RegistroForm, UsuarioForm
 ├── model/         Usuario, Rol, BbddPropietario
@@ -129,6 +129,7 @@ independiente del fichero `./data/sqlanalyzer`.
 | `BbddTests` | Pasos 1 a 8 del módulo 1: validación del DDL, prototipo, creación, inserción, ANALYZE, exportación, registro y descarga de dumps |
 | `ServidorTests` | Paso 9: probar conexión, restaurar y recordar la contraseña solo en la sesión |
 | `FilasPorDefectoTests` | Filas que se proponen por defecto en el paso 3 |
+| `AnalisisTests` | Módulo 2, parte 1: BBDD objetivo que ve cada rol, rechazo de BBDD ajenas, resultado y errores de la API |
 | `RolesTests` | Qué ve y qué puede hacer cada rol (paso 9, registro, dumps, progreso de la carga) |
 | `SecurityTests` | Redirección a login, credenciales, permisos, CSRF, validación de formularios y subida de logs |
 | `UsuarioTests` | Registro público, gestión de usuarios y propietarios de las BBDD al renombrar o eliminar |

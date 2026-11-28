@@ -6,6 +6,7 @@ import os
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException
@@ -17,6 +18,7 @@ from .plano_datos import (FICHERO_DUMP, Conexion, analizar_bbdd, analizar_depend
                           formar_arboles, generar_prototipo, insertar_datos,
                           listar_registro, ordenar_arboles, parsear_ddl, probar_servidor, progreso_insercion,
                           restaurar_bbdd)
+from .plano_consultas import MAX_SQL, revisar_destino
 
 app = FastAPI(title="SQL Analyzer API", version="0.1.0")
 
@@ -463,6 +465,36 @@ def descargar_dump(fichero: str, directorio: Path = Depends(dumps)) -> FileRespo
         raise HTTPException(500, f"La API no tiene permiso para leer el dump «{fichero}»")
     tipo = "application/sql" if fichero.endswith(".sql") else "application/octet-stream"
     return FileResponse(ruta, media_type=tipo, filename=fichero)
+
+
+# --- Módulo 2: plano de consultas ---
+
+# 
+class PeticionConsulta(BaseModel):
+    sql: str = Field(min_length=1, max_length=MAX_SQL)
+    # Lo que el usuario dice que es: una consulta o un procedimiento.
+    tipo: Literal["CONSULTA", "PROCEDIMIENTO"] = "CONSULTA"
+    # BBDD objetivo del módulo 1. None: solo análisis estático.
+    bbdd: str | None = Field(default=None, max_length=63)
+
+
+class RespuestaConsulta(BaseModel):
+    valido: bool
+    errores: list[ErrorDdlDto]
+    tipo: str
+    bbdd: str | None = None
+    # Versión de PostgreSQL del servidor de la BBDD objetivo.
+    version: str | None = None
+
+
+@app.post("/analisis", response_model=RespuestaConsulta)
+def analizar_consulta(peticion: PeticionConsulta, con: Conexion = Depends(conexion)) -> RespuestaConsulta:
+    """Módulo 2, parte 1: recibe el SQL y comprueba la BBDD objetivo (registrada en el módulo 1 y existente).
+
+    Las partes siguientes (parseo, análisis estático, EXPLAIN y recomendaciones) completan la respuesta."""
+    destino = revisar_destino(peticion.bbdd, con)
+    return RespuestaConsulta(valido=destino.valido, errores=_errores(destino.errores), tipo=peticion.tipo,
+                             bbdd=destino.bbdd, version=destino.version)
 
 
 def _analizar_ddl(ddl: str):

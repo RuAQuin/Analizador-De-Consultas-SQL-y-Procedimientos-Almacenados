@@ -1,11 +1,13 @@
 package es.tfg.sqlanalyzer;
 
+import es.tfg.sqlanalyzer.api.ApiPythonClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestBuilders.formLogin;
@@ -19,6 +21,10 @@ class SecurityTests {
 
     @Autowired
     MockMvc mvc;
+
+    // La API simulada: las pantallas de BBDD y de análisis la llaman (sin respuesta, devuelve vacío).
+    @MockitoBean
+    ApiPythonClient api;
 
     @Test
     // Verifica que un usuario anónimo es redirigido a la página de login al intentar acceder a la raíz de la aplicación.
@@ -73,16 +79,16 @@ class SecurityTests {
 
     @Test
     @WithMockUser(roles = "ADMIN")
-    // Verifica que los formularios de creación de base de datos y análisis validan correctamente los campos requeridos y redirigen a la página de análisis después de un envío exitoso.
+    // Verifica que los formularios de creación de base de datos y de análisis validan los campos obligatorios.
     void formulariosValidan() throws Exception {
         // Incluyen CSRF token
         mvc.perform(post("/bbdd").with(csrf()).param("nombreBbdd", "Mal Nombre"))
            .andExpect(status().isOk())
            .andExpect(model().attributeHasFieldErrors("form", "nombreBbdd", "definicionTablas"));
 
-        mvc.perform(post("/analisis").with(csrf())
-                .param("sql", "SELECT 1").param("tipo", "CONSULTA").param("explainPlan", "true"))
-           .andExpect(redirectedUrl("/analisis"));
+        mvc.perform(post("/analisis").with(csrf()).param("sql", " ").param("tipo", "CONSULTA"))
+           .andExpect(status().isOk())
+           .andExpect(model().attributeHasFieldErrors("form", "sql"));
     }
 
     @Test

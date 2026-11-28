@@ -1,6 +1,6 @@
 # Entorno del Analizador SQL: PostgreSQL objetivo + API Python.
 # La WebApp Spring Boot se arranca aparte (mvn spring-boot:run) y llama a la API
-# en http://localhost:8000; nunca se conecta directamente a PostgreSQL.
+# en http://127.0.0.1:8000; nunca se conecta directamente a PostgreSQL.
 #
 #   docker compose up -d --build      # arrancar
 #   docker compose down               # parar (los datos se conservan)
@@ -16,6 +16,8 @@ services:
       POSTGRES_DB: postgres
     # 5433 en el host para no chocar con un PostgreSQL local en el 5432.
     # Solo en 127.0.0.1: desde este equipo (pgAdmin, psql) se llega, pero no desde otros equipos de la red.
+    # Conectarse con 127.0.0.1 y no con «localhost»: en Windows, «localhost» prueba antes IPv6 (::1), donde no
+    # escucha, y cada conexión tarda unos segundos más.
     ports:
       - "127.0.0.1:${PG_PUERTO_HOST:-5433}:5432"
     volumes:

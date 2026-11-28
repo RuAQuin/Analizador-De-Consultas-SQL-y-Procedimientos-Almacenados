@@ -29,7 +29,9 @@ _RESERVADAS = {"postgres", "template0", "template1"}
 @dataclass(frozen=True)
 class Conexion:
     """Datos de conexión con el servidor PostgreSQL donde se crean las BBDD."""
-    host: str = "localhost"
+    # 127.0.0.1 y no «localhost»: el PostgreSQL de Docker solo escucha en IPv4 y, en Windows, «localhost» prueba
+    # antes IPv6 (::1), lo que añade unos segundos a cada conexión.
+    host: str = "127.0.0.1"
     puerto: int = 5433
     usuario: str = "postgres"
     contrasena: str = "postgres"

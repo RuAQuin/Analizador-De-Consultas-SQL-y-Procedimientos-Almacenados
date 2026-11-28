@@ -1,7 +1,8 @@
 # SQL Analyzer · API Python
 
 API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
-(generación de BBDD) paso a paso según el esquema funcional.
+(generación de BBDD, `plano_datos/`) paso a paso según el esquema funcional, y empieza el Módulo 2
+(análisis de consultas, `plano_consultas/`).
 
 | Paso | Estado |
 |------|--------|
@@ -24,11 +25,13 @@ API REST (FastAPI) que consume la WebApp Spring Boot. Implementa el Módulo 1
 Con Docker (desde la raíz del proyecto):
 
 ```bash
-docker compose up -d --build --wait   # API en http://localhost:8000, PostgreSQL en localhost:5433
+docker compose up -d --build --wait   # API en http://127.0.0.1:8000, PostgreSQL en 127.0.0.1:5433
 ```
 
 Los dos puertos se publican solo en `127.0.0.1`: se llega desde este equipo (la WebApp, pgAdmin, psql), pero no
 desde otros equipos de la red. La API no tiene login, así que los roles de la WebApp no se pueden saltar por ella.
+Conviene usar `127.0.0.1` y no `localhost`: en Windows, `localhost` prueba antes IPv6 (`::1`), donde no escucha, y
+cada conexión tarda unos segundos más.
 
 En local:
 
@@ -56,6 +59,7 @@ uvicorn sqlanalyzer_api.app:app --reload
 | GET | `/bbdd/dumps/{fichero}` | Paso 8.1: descarga un dump |
 | POST | `/bbdd/servidor/probar` | Paso 9: prueba la conexión con el PostgreSQL de otro equipo de la red |
 | POST | `/bbdd/restaurar` | Paso 9: restaura el respaldo del paso 8 en el PostgreSQL de otro equipo |
+| POST | `/analisis` | Módulo 2: análisis de una consulta o procedimiento (de momento, parte 1: comprueba la BBDD objetivo) |
 
 `POST /bbdd/ddl` recibe `{"ddl": "CREATE TABLE ..."}` y siempre responde 200:
 
@@ -159,7 +163,7 @@ En la WebApp, el botón "Confirmar y crear la BBDD" (debajo de la vista previa) 
 ```
 
 `plano_datos/creacion.py` (con `psycopg`; la conexión sale de las variables `PG_*` de
-`docker-compose.yml`, y sin ellas, de `localhost:5433` con `postgres`/`postgres`):
+`docker-compose.yml`, y sin ellas, de `127.0.0.1:5433` con `postgres`/`postgres`):
 
 1. Vuelve a comprobar el DDL (pasos 1 y 2) y el prototipo (paso 3): la API no guarda nada.
 2. **Revisión (paso 4)**: el nombre debe tener un formato válido, no ser una BBDD reservada
@@ -197,7 +201,7 @@ docker exec -it sqlanalyzer-postgres psql -U postgres -d tienda_demo            
 Las tablas están vacías hasta el paso 6 (inserción de datos): `SELECT count(*) FROM clientes;` da 0
 antes de pulsar "Insertar N filas" y el número de filas indicado después.
 
-Con un cliente gráfico (pgAdmin, DBeaver...): host `localhost`, puerto `5433`, usuario y contraseña
+Con un cliente gráfico (pgAdmin, DBeaver...): host `127.0.0.1`, puerto `5433`, usuario y contraseña
 `postgres`, BBDD `postgres` (desde ella se ven todas las demás).
 
 Para repetir una prueba con el mismo nombre, se borra la BBDD:
@@ -373,6 +377,39 @@ en `pg_hba.conf`, tener el puerto abierto en el firewall, un usuario con `CREATE
 que la del servidor de la aplicación (17). Para probarlo sin otro equipo,
 `docker compose --profile pruebas up -d otro-equipo` arranca un PostgreSQL 17 en el puerto 5434
 (`postgres` / `otroequipo`).
+
+## Módulo 2: análisis de consultas
+
+Plano de consultas (`plano_consultas/`), separado del plano de datos: lee las BBDD objetivo, pero no las crea ni
+las modifica. Se hace parte por parte siguiendo el diagrama del esquema:
+
+| Parte | Estado |
+|-------|--------|
+| 1. Entrada del SQL y BBDD objetivo | Hecho |
+| 2. ¿Parsea con pglast? → error de sintaxis; SQL formateado | Pendiente |
+| 3. Análisis estático con pglast | Pendiente |
+| 4. ¿SELECT o DML? → solo análisis estático | Pendiente |
+| 5. Parámetros (`ParamRef`) → `EXPLAIN (GENERIC_PLAN)` | Pendiente |
+| 6. Valores (`A_Const`) → `EXPLAIN (ANALYZE, BUFFERS)` | Pendiente |
+| 7. Motor de reglas y recomendaciones | Pendiente |
+
+`POST /analisis` recibe `{"sql": "...", "tipo": "CONSULTA" | "PROCEDIMIENTO", "bbdd": "tienda" | null}` y
+responde 200 (422 si el SQL está vacío, pasa de 50 000 caracteres o el tipo no es uno de los dos):
+
+```json
+{"valido": true, "errores": [], "tipo": "CONSULTA", "bbdd": "tienda", "version": "17.11"}
+```
+
+Sin `bbdd` solo se podrá hacer el análisis estático y no se conecta al servidor. Con `bbdd`, la API comprueba
+(`plano_consultas/entrada.py`) que:
+
+- tenga un nombre válido y no sea una BBDD reservada (`postgres`, `template0`, `template1`, el repositorio);
+- esté en el registro de BBDD objetivo **del servidor de la aplicación** (paso 8). Las copias restauradas en otros
+  equipos (paso 9) no valen: su contraseña no se guarda;
+- siga existiendo en el servidor.
+
+Así la API solo analiza BBDD generadas en el módulo 1, aunque alguien la llame sin pasar por la WebApp (que
+además solo ofrece a cada usuario las suyas).
 
 ## Tests
 
